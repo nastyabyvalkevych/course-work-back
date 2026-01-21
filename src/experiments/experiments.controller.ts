@@ -1,28 +1,31 @@
-import { Controller, Get, Post } from '@nestjs/common'
+import { Body, Controller, Get, Post, Query } from '@nestjs/common'
 
 import { ExperimentsService } from './experiments.service'
+import { ExperimentConfigDto } from './dto/experiment-config.dto'
+import { GridSearchDto } from './dto/grid-search.dto'
+import { ExperimentResultsQueryDto } from './dto/experiment-results-query.dto'
 
 @Controller('api/experiments')
 export class ExperimentsController {
     constructor(private readonly experimentsService: ExperimentsService) {}
 
     @Post('run')
-    async runExperiment() {
-        return this.experimentsService.getPlaceholderResponse('run')
+    async runExperiment(@Body() config: ExperimentConfigDto) {
+        return this.experimentsService.runExperiment(config)
     }
 
     @Post('grid-search')
-    async gridSearch() {
-        return this.experimentsService.getPlaceholderResponse('grid-search')
+    async gridSearch(@Body() dto: GridSearchDto) {
+        return this.experimentsService.gridSearch(dto.k1Values, dto.bValues)
     }
 
     @Get('results')
-    async getResults() {
-        return this.experimentsService.getPlaceholderResponse('results')
+    async getResults(@Query() query: ExperimentResultsQueryDto) {
+        return this.experimentsService.getResults(query.sortBy, query.order)
     }
 
     @Get('best')
     async getBest() {
-        return this.experimentsService.getPlaceholderResponse('best')
+        return this.experimentsService.getBest()
     }
 }

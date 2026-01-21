@@ -1,0 +1,8 @@
+-- AlterTable
+ALTER TABLE "CollectionStats" ADD COLUMN     "version" INTEGER NOT NULL DEFAULT 1;
+
+-- AlterTable
+ALTER TABLE "TermStatistics" ADD COLUMN     "collectionFrequency" INTEGER NOT NULL DEFAULT 0,
+ADD COLUMN     "dfCpv" INTEGER NOT NULL DEFAULT 0,
+ADD COLUMN     "dfDescription" INTEGER NOT NULL DEFAULT 0,
+ADD COLUMN     "dfTitle" INTEGER NOT NULL DEFAULT 0;

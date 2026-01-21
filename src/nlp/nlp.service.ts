@@ -7,8 +7,7 @@ const UKRAINIAN_TOKENIZER = /[а-яіїєґА-ЯІЇЄҐ]+(?:['-][а-яіїєґ�
 @Injectable()
 export class NlpService {
     private readonly logger = new Logger(NlpService.name)
-    private readonly lemmatizerUrl =
-        process.env.LEMMATIZER_URL ?? 'http://localhost:5001/lemmatize'
+    private readonly lemmatizerUrl = this.resolveLemmatizerUrl()
 
     async processText(text: string): Promise<string[]> {
         const tokens = this.tokenize(text)
@@ -28,10 +27,14 @@ export class NlpService {
     }
 
     async lemmatize(tokens: string[]): Promise<string[]> {
-        if (tokens.length === 0) {
+        if (!tokens.length) {
             return []
         }
 
+        return this.lemmatizeRemote(tokens)
+    }
+
+    private async lemmatizeRemote(tokens: string[]): Promise<string[]> {
         try {
             const response = await fetch(this.lemmatizerUrl, {
                 method: 'POST',
@@ -40,15 +43,31 @@ export class NlpService {
             })
 
             if (!response.ok) {
-                this.logger.warn(`Lemmatizer returned ${response.status}.`)
-                return tokens
+                const body = await response.text()
+                const message = `Lemmatizer error ${response.status}: ${body}`
+                this.logger.error(message)
+                throw new Error(message)
             }
 
             const data = (await response.json()) as { lemmas?: string[] }
-            return data.lemmas ?? tokens
+            if (!data.lemmas) {
+                throw new Error('Lemmatizer response missing lemmas.')
+            }
+            return data.lemmas
         } catch (error) {
-            this.logger.warn(`Lemmatizer request failed: ${String(error)}`)
-            return tokens
+            this.logger.error(`Lemmatizer request failed: ${String(error)}`)
+            throw error
         }
+    }
+
+    private resolveLemmatizerUrl(): string {
+        const raw = process.env.LEMMATIZER_URL ?? 'http://localhost:5001/lemmatize'
+        if (raw.endsWith('/lemmatize')) {
+            return raw
+        }
+        if (raw.endsWith('/')) {
+            return `${raw}lemmatize`
+        }
+        return `${raw}/lemmatize`
     }
 }

@@ -44,6 +44,10 @@ model TermStatistics {
   term              String  @unique
   documentFrequency Int
   idf               Float
+  dfTitle           Int     @default(0)
+  dfDescription     Int     @default(0)
+  dfCpv             Int     @default(0)
+  collectionFrequency Int   @default(0)
   updatedAt         DateTime @updatedAt
 }
 
@@ -55,6 +59,7 @@ model CollectionStats {
   avgTitleLength     Float?
   avgDescriptionLength Float?
   avgCpvCodesLength  Float?
+  version            Int      @default(1)
   updatedAt          DateTime @updatedAt
 }
 

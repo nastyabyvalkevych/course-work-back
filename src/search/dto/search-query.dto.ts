@@ -1,0 +1,66 @@
+import { Type } from 'class-transformer'
+import {
+    IsDateString,
+    IsInt,
+    IsNotEmpty,
+    IsNumber,
+    IsOptional,
+    IsString,
+    Max,
+    Min,
+} from 'class-validator'
+
+export class SearchQueryDto {
+    @IsString()
+    @IsNotEmpty()
+    q: string
+
+    @IsOptional()
+    @Type(() => Number)
+    @IsInt()
+    @Min(1)
+    @Max(100)
+    limit?: number = 20
+
+    @IsOptional()
+    @Type(() => Number)
+    @IsInt()
+    @Min(0)
+    offset?: number = 0
+
+    @IsOptional()
+    @Type(() => Number)
+    @IsNumber()
+    @Min(0)
+    @Max(5)
+    k1?: number = 1.2
+
+    @IsOptional()
+    @Type(() => Number)
+    @IsNumber()
+    @Min(0)
+    @Max(1)
+    b?: number = 0.75
+
+    @IsOptional()
+    @IsString()
+    status?: string
+
+    @IsOptional()
+    @Type(() => Number)
+    @IsNumber()
+    minValue?: number
+
+    @IsOptional()
+    @Type(() => Number)
+    @IsNumber()
+    maxValue?: number
+
+    @IsOptional()
+    @IsDateString()
+    dateFrom?: string
+
+    @IsOptional()
+    @IsDateString()
+    dateTo?: string
+}
