@@ -1,0 +1,96 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model Tender {
+  id              Int            @id @default(autoincrement())
+  prozorroId      String         @unique
+  title           String?
+  description     String?
+  procuringEntity String?
+  cpvCodes        String[]
+  valueAmount     Float?
+  valueCurrency   String?
+  status          String?
+  datePublished   DateTime?
+  dateModified    DateTime?
+  documentLength  Int            @default(0)
+  rawData         Json
+  createdAt       DateTime       @default(now())
+  updatedAt       DateTime       @updatedAt
+  tenderIndexes   TenderIndex[]
+}
+
+model TenderIndex {
+  id            Int    @id @default(autoincrement())
+  tenderId      Int
+  term          String
+  termFrequency Int
+  fieldName     String
+  tender        Tender @relation(fields: [tenderId], references: [id], onDelete: Cascade)
+
+  @@index([term])
+  @@index([tenderId])
+  @@index([term, tenderId])
+}
+
+model TermStatistics {
+  id                Int     @id @default(autoincrement())
+  term              String  @unique
+  documentFrequency Int
+  idf               Float
+  updatedAt         DateTime @updatedAt
+}
+
+model CollectionStats {
+  id                 Int      @id @default(autoincrement())
+  totalDocuments     Int
+  avgDocumentLength  Float
+  uniqueTerms        Int
+  avgTitleLength     Float?
+  avgDescriptionLength Float?
+  avgCpvCodesLength  Float?
+  updatedAt          DateTime @updatedAt
+}
+
+model TestQuery {
+  id          Int                 @id @default(autoincrement())
+  queryText   String
+  category    String?
+  difficulty  String?
+  createdAt   DateTime            @default(now())
+  judgments   RelevanceJudgment[]
+}
+
+model RelevanceJudgment {
+  id             Int      @id @default(autoincrement())
+  queryId        Int
+  tenderId       Int
+  relevanceScore Int
+  comment        String?
+  createdAt      DateTime @default(now())
+  query          TestQuery @relation(fields: [queryId], references: [id], onDelete: Cascade)
+
+  @@index([queryId])
+  @@index([tenderId])
+}
+
+model ExperimentResult {
+  id               Int      @id @default(autoincrement())
+  experimentName   String
+  k1               Float
+  b                Float
+  fieldWeights     Json?
+  usesLemmatization Boolean
+  usesMultifield   Boolean
+  precisionAt10    Float
+  recallAt10       Float
+  meanAvgPrecision Float
+  numTestQueries   Int
+  createdAt        DateTime @default(now())
+}
