@@ -3,6 +3,7 @@ import { Prisma, Tender } from '@prisma/client'
 
 import { PrismaService } from '../prisma/prisma.service'
 import { NlpService } from '../nlp/nlp.service'
+import { RedisService } from '../redis/redis.service'
 
 type SearchFilters = {
     status?: string
@@ -27,6 +28,7 @@ type SearchResultItem = {
     score: number
     highlights: string[]
     matchedFields: string[]
+    matchedTerms: Array<{ field: string; terms: string[] }>
 }
 
 type SearchResponse = {
@@ -37,6 +39,7 @@ type SearchResponse = {
         queryTimeMs: number
         k1: number
         b: number
+        queryTerms: string[]
     }
 }
 
@@ -105,6 +108,7 @@ export class SearchService {
     constructor(
         private readonly prisma: PrismaService,
         private readonly nlpService: NlpService,
+        private readonly redisService: RedisService,
     ) {}
 
     async search(
@@ -113,9 +117,15 @@ export class SearchService {
     ): Promise<SearchResponse> {
         const startTime = Date.now()
         const queryTerms = await this.nlpService.processText(query)
+        const cacheKey = this.buildSearchCacheKey(query, options)
+
+        const cached = await this.redisService.get<SearchResponse>(cacheKey)
+        if (cached) {
+            return cached
+        }
 
         if (!queryTerms.length) {
-            return {
+            const emptyResponse = {
                 query,
                 total: 0,
                 results: [],
@@ -123,8 +133,11 @@ export class SearchService {
                     queryTimeMs: Date.now() - startTime,
                     k1: options.k1 ?? 0.5,
                     b: options.b ?? 0.0,
+                    queryTerms,
                 },
             }
+            await this.redisService.set(cacheKey, emptyResponse)
+            return emptyResponse
         }
 
         const candidateIds = await this.findCandidates(queryTerms)
@@ -161,7 +174,7 @@ export class SearchService {
         })
 
         const tenderMap = new Map(tenders.map((tender) => [tender.id, tender]))
-        const matchedFieldsMap = await this.getMatchedFields(
+        const matchedTermsMap = await this.getMatchedTerms(
             tenderIds,
             queryTerms,
         )
@@ -172,16 +185,18 @@ export class SearchService {
                 if (!tender) {
                     return null
                 }
+                const matchedTerms = matchedTermsMap.get(tender.id) ?? []
                 return {
                     tender,
                     score: item.score,
                     highlights: this.generateHighlights(tender, queryTerms),
-                    matchedFields: matchedFieldsMap.get(tender.id) ?? [],
+                    matchedFields: matchedTerms.map((match) => match.field),
+                    matchedTerms,
                 }
             })
             .filter((item): item is SearchResultItem => Boolean(item))
 
-        return {
+        const response = {
             query,
             total: scored.length,
             results,
@@ -189,8 +204,44 @@ export class SearchService {
                 queryTimeMs: Date.now() - startTime,
                 k1,
                 b,
+                queryTerms,
             },
         }
+        await this.redisService.set(cacheKey, response)
+
+        return response
+    }
+
+    private buildSearchCacheKey(query: string, options: SearchOptions): string {
+        const cachePayload = {
+            query,
+            options: {
+                ...options,
+                filters: options.filters ?? {},
+            },
+        }
+        return `search:${this.stableStringify(cachePayload)}`
+    }
+
+    private stableStringify(value: unknown): string {
+        if (value === null || value === undefined) {
+            return 'null'
+        }
+        if (typeof value !== 'object') {
+            return JSON.stringify(value)
+        }
+        if (Array.isArray(value)) {
+            return `[${value.map((item) => this.stableStringify(item)).join(',')}]`
+        }
+        const entries = Object.entries(value as Record<string, unknown>).sort(
+            ([keyA], [keyB]) => keyA.localeCompare(keyB),
+        )
+        return `{${entries
+            .map(
+                ([key, entryValue]) =>
+                    `${JSON.stringify(key)}:${this.stableStringify(entryValue)}`,
+            )
+            .join(',')}}`
     }
 
     async findCandidates(queryTerms: string[]): Promise<number[]> {
@@ -392,10 +443,10 @@ export class SearchService {
         return tenders.map((tender) => tender.id)
     }
 
-    private async getMatchedFields(
+    private async getMatchedTerms(
         tenderIds: number[],
         queryTerms: string[],
-    ): Promise<Map<number, string[]>> {
+    ): Promise<Map<number, Array<{ field: string; terms: string[] }>>> {
         if (!tenderIds.length || !queryTerms.length) {
             return new Map()
         }
@@ -405,20 +456,25 @@ export class SearchService {
                 tenderId: { in: tenderIds },
                 term: { in: queryTerms },
             },
-            select: { tenderId: true, fieldName: true },
+            select: { tenderId: true, fieldName: true, term: true },
         })
 
-        const matched = new Map<number, Set<string>>()
+        const matched = new Map<number, Map<string, Set<string>>>()
         entries.forEach((entry) => {
-            const current = matched.get(entry.tenderId) ?? new Set<string>()
-            current.add(entry.fieldName)
-            matched.set(entry.tenderId, current)
+            const tenderEntry = matched.get(entry.tenderId) ?? new Map()
+            const terms = tenderEntry.get(entry.fieldName) ?? new Set<string>()
+            terms.add(entry.term.toLowerCase())
+            tenderEntry.set(entry.fieldName, terms)
+            matched.set(entry.tenderId, tenderEntry)
         })
 
         return new Map(
             Array.from(matched.entries()).map(([tenderId, fields]) => [
                 tenderId,
-                Array.from(fields),
+                Array.from(fields.entries()).map(([field, terms]) => ({
+                    field,
+                    terms: Array.from(terms),
+                })),
             ]),
         )
     }

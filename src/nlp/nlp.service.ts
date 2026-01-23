@@ -56,9 +56,18 @@ export class NlpService {
         }
 
         const lemmas = await this.lemmatizeRemote(ukrainianTokens)
-        const normalized = [...tokens]
-        ukrainianIndexes.forEach((index, lemmaIndex) => {
-            normalized[index] = lemmas[lemmaIndex] ?? normalized[index]
+        const normalized: string[] = []
+        tokens.forEach((token, index) => {
+            if (!UKRAINIAN_WORD.test(token)) {
+                normalized.push(token)
+                return
+            }
+            const lemmaIndex = ukrainianIndexes.indexOf(index)
+            const lemma = lemmas[lemmaIndex] ?? token
+            normalized.push(token)
+            if (lemma !== token) {
+                normalized.push(lemma)
+            }
         })
         return normalized
     }

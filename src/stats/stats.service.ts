@@ -1,12 +1,27 @@
 import { Injectable } from '@nestjs/common'
 
 import { PrismaService } from '../prisma/prisma.service'
+import { RedisService } from '../redis/redis.service'
 
 @Injectable()
 export class StatsService {
-    constructor(private readonly prisma: PrismaService) {}
+    constructor(
+        private readonly prisma: PrismaService,
+        private readonly redisService: RedisService,
+    ) {}
 
     async getStats() {
+        const cacheKey = 'stats:summary'
+        const cached = await this.redisService.get<{
+            totalTenders: number
+            statusDistribution: Array<{ status: string; count: number }>
+            topTerms: Array<{ term: string; documentFrequency: number }>
+        }>(cacheKey)
+
+        if (cached) {
+            return cached
+        }
+
         const [totalTenders, statusGroups, topTerms] = await Promise.all([
             this.prisma.tender.count(),
             this.prisma.tender.groupBy({
@@ -21,7 +36,7 @@ export class StatsService {
             }),
         ])
 
-        return {
+        const response = {
             totalTenders,
             statusDistribution: statusGroups.map((group) => ({
                 status: group.status ?? 'Unknown',
@@ -29,5 +44,7 @@ export class StatsService {
             })),
             topTerms,
         }
+        await this.redisService.set(cacheKey, response)
+        return response
     }
 }
