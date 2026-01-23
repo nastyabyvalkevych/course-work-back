@@ -2,7 +2,8 @@ import { Injectable, Logger } from '@nestjs/common'
 
 import { STOP_WORDS } from './stop-words'
 
-const UKRAINIAN_TOKENIZER = /[а-яіїєґА-ЯІЇЄҐ]+(?:['-][а-яіїєґА-ЯІЇЄҐ]+)*/g
+const UKRAINIAN_TOKENIZER = /[0-9a-zа-яіїєґ]+(?:['-][0-9a-zа-яіїєґ]+)*/gi
+const UKRAINIAN_WORD = /^[а-яіїєґ]+(?:['-][а-яіїєґ]+)*$/i
 
 @Injectable()
 export class NlpService {
@@ -15,11 +16,20 @@ export class NlpService {
         return this.lemmatize(filtered)
     }
 
-    tokenize(text: string): string[] {
-        if (!text) {
+    tokenize(text: string | number | boolean | null | undefined): string[] {
+        if (text === null || text === undefined) {
             return []
         }
-        return text.toLowerCase().match(UKRAINIAN_TOKENIZER) ?? []
+        const normalized =
+            typeof text === 'string'
+                ? text
+                : typeof text === 'number' || typeof text === 'boolean'
+                  ? String(text)
+                  : ''
+        if (!normalized) {
+            return []
+        }
+        return normalized.toLowerCase().match(UKRAINIAN_TOKENIZER) ?? []
     }
 
     removeStopWords(tokens: string[]): string[] {
@@ -31,7 +41,26 @@ export class NlpService {
             return []
         }
 
-        return this.lemmatizeRemote(tokens)
+        const ukrainianIndexes: number[] = []
+        const ukrainianTokens: string[] = []
+
+        tokens.forEach((token, index) => {
+            if (UKRAINIAN_WORD.test(token)) {
+                ukrainianIndexes.push(index)
+                ukrainianTokens.push(token)
+            }
+        })
+
+        if (!ukrainianTokens.length) {
+            return tokens
+        }
+
+        const lemmas = await this.lemmatizeRemote(ukrainianTokens)
+        const normalized = [...tokens]
+        ukrainianIndexes.forEach((index, lemmaIndex) => {
+            normalized[index] = lemmas[lemmaIndex] ?? normalized[index]
+        })
+        return normalized
     }
 
     private async lemmatizeRemote(tokens: string[]): Promise<string[]> {
@@ -61,7 +90,8 @@ export class NlpService {
     }
 
     private resolveLemmatizerUrl(): string {
-        const raw = process.env.LEMMATIZER_URL ?? 'http://localhost:5001/lemmatize'
+        const raw =
+            process.env.LEMMATIZER_URL ?? 'http://localhost:5001/lemmatize'
         if (raw.endsWith('/lemmatize')) {
             return raw
         }

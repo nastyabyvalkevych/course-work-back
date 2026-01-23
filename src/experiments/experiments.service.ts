@@ -32,7 +32,9 @@ export class ExperimentsService {
         }
 
         if (config.usesMultifield) {
-            this.logger.warn('BM25F is not implemented yet. Falling back to BM25.')
+            this.logger.warn(
+                'BM25F is not implemented yet. Falling back to BM25.',
+            )
         }
 
         let sumPrecision = 0
@@ -43,6 +45,8 @@ export class ExperimentsService {
             const results = await this.searchService.search(query.queryText, {
                 k1: config.k1,
                 b: config.b,
+                useMultifield: config.usesMultifield ?? false,
+                fieldWeights: config.fieldWeights,
             })
 
             const judgments = await this.prisma.relevanceJudgment.findMany({
@@ -53,8 +57,14 @@ export class ExperimentsService {
                 results.results,
                 judgments,
             )
-            const recall = this.metricsService.calculateRecall(results.results, judgments)
-            const ap = this.metricsService.calculateAveragePrecision(results.results, judgments)
+            const recall = this.metricsService.calculateRecall(
+                results.results,
+                judgments,
+            )
+            const ap = this.metricsService.calculateAveragePrecision(
+                results.results,
+                judgments,
+            )
 
             sumPrecision += precision
             sumRecall += recall
@@ -79,7 +89,10 @@ export class ExperimentsService {
         })
     }
 
-    async gridSearch(k1Values: number[], bValues: number[]): Promise<ExperimentResult[]> {
+    async gridSearch(
+        k1Values: number[],
+        bValues: number[],
+    ): Promise<ExperimentResult[]> {
         const results: ExperimentResult[] = []
 
         for (const k1 of k1Values) {
@@ -98,7 +111,10 @@ export class ExperimentsService {
         return results
     }
 
-    async getResults(sortBy?: 'map' | 'precision' | 'recall', order: 'asc' | 'desc' = 'desc') {
+    async getResults(
+        sortBy?: 'map' | 'precision' | 'recall',
+        order: 'asc' | 'desc' = 'desc',
+    ) {
         const orderByField =
             sortBy === 'precision'
                 ? 'precisionAt10'

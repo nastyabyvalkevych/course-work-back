@@ -14,6 +14,7 @@ export class SearchController {
             offset: query.offset,
             k1: query.k1,
             b: query.b,
+            useMultifield: query.useMultifield,
             filters: {
                 status: query.status,
                 minValue: query.minValue,

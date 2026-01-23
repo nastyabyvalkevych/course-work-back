@@ -11,6 +11,7 @@ import { PrismaModule } from './prisma/prisma.module'
 import { ProzorroModule } from './prozorro/prozorro.module'
 import { SearchModule } from './search/search.module'
 import { StatsModule } from './stats/stats.module'
+import { TendersModule } from './tenders/tenders.module'
 
 @Module({
     imports: [
@@ -23,6 +24,7 @@ import { StatsModule } from './stats/stats.module'
         ExperimentsModule,
         MetricsModule,
         StatsModule,
+        TendersModule,
     ],
     controllers: [AppController],
     providers: [AppService],

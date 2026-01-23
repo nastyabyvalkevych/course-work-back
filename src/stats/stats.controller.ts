@@ -8,6 +8,6 @@ export class StatsController {
 
     @Get()
     async getStats() {
-        return this.statsService.getPlaceholderResponse()
+        return this.statsService.getStats()
     }
 }

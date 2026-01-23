@@ -1,4 +1,5 @@
 import { Injectable, Logger } from '@nestjs/common'
+import { Prisma } from '@prisma/client'
 
 import { PrismaService } from '../prisma/prisma.service'
 import { NlpService } from '../nlp/nlp.service'
@@ -75,7 +76,10 @@ export class IndexingService {
         for (const tender of tenders) {
             const result = await this.buildIndexEntries(tender)
             entries.push(...result.entries)
-            updates.push({ id: tender.id, documentLength: result.documentLength })
+            updates.push({
+                id: tender.id,
+                documentLength: result.documentLength,
+            })
         }
 
         if (entries.length > 0) {
@@ -120,9 +124,11 @@ export class IndexingService {
         `
 
         const avgTitleLength =
-            fieldStats.find((row) => row.field_name === 'title')?.avg_length ?? 0
+            fieldStats.find((row) => row.field_name === 'title')?.avg_length ??
+            0
         const avgDescriptionLength =
-            fieldStats.find((row) => row.field_name === 'description')?.avg_length ?? 0
+            fieldStats.find((row) => row.field_name === 'description')
+                ?.avg_length ?? 0
         const avgCpvCodesLength =
             fieldStats.find((row) => row.field_name === 'cpv')?.avg_length ?? 0
 
@@ -156,7 +162,9 @@ export class IndexingService {
         })
 
         if (!collectionStats) {
-            throw new Error('Collection stats not found. Run updateCollectionStats first.')
+            throw new Error(
+                'Collection stats not found. Run updateCollectionStats first.',
+            )
         }
 
         const totalDocuments = collectionStats.totalDocuments
@@ -187,7 +195,10 @@ export class IndexingService {
             const batch = termStats.slice(i, i + batchSize)
             await this.prisma.$transaction(
                 batch.map((row) => {
-                    const idf = this.calculateIDF(row.document_frequency, totalDocuments)
+                    const idf = this.calculateIDF(
+                        row.document_frequency,
+                        totalDocuments,
+                    )
                     return this.prisma.termStatistics.upsert({
                         where: { term: row.term },
                         update: {
@@ -214,7 +225,11 @@ export class IndexingService {
     }
 
     calculateIDF(documentFrequency: number, totalDocuments: number): number {
-        return Math.log((totalDocuments - documentFrequency + 0.5) / (documentFrequency + 0.5) + 1)
+        return Math.log(
+            (totalDocuments - documentFrequency + 0.5) /
+                (documentFrequency + 0.5) +
+                1,
+        )
     }
 
     async clearIndex(): Promise<void> {
@@ -227,7 +242,9 @@ export class IndexingService {
     }
 
     async getAllTenderIds(): Promise<number[]> {
-        const tenders = await this.prisma.tender.findMany({ select: { id: true } })
+        const tenders = await this.prisma.tender.findMany({
+            select: { id: true },
+        })
         return tenders.map((tender) => tender.id)
     }
 
@@ -282,11 +299,319 @@ export class IndexingService {
         title: string | null
         description: string | null
         cpvCodes: string[]
+        status?: string | null
+        rawData: Prisma.JsonValue | null
     }) {
+        const raw = this.normalizeRawData(tender.rawData)
+        const items = Array.isArray(raw.items) ? raw.items : []
+        const bids = Array.isArray(raw.bids) ? raw.bids : []
+        const awards = Array.isArray(raw.awards) ? raw.awards : []
+        const documents = Array.isArray(raw.documents) ? raw.documents : []
+        const milestones = Array.isArray(raw.milestones) ? raw.milestones : []
+        const contracts = Array.isArray(raw.contracts) ? raw.contracts : []
+        const criteria = Array.isArray(raw.criteria) ? raw.criteria : []
+
+        const itemsText = this.joinValues(
+            items.map((item) => item?.description),
+        )
+        const itemsQuantityText = this.joinValues(
+            items.map((item) => {
+                const quantity = item?.quantity
+                const unitName = item?.unit?.name ?? item?.unit?.code
+                if (quantity === undefined && !unitName) {
+                    return null
+                }
+                return [quantity, unitName].filter(Boolean).join(' ')
+            }),
+        )
+        const itemsUnit = this.joinValues(
+            items.flatMap((item) => [item?.unit?.name, item?.unit?.code]),
+        )
+        const cpvText = this.joinValues(
+            items.map((item) => item?.classification?.description),
+        )
+
+        const procuringEntityName = this.joinValues([
+            raw.procuringEntity?.name,
+            raw.procuringEntity?.contactPoint?.name,
+            raw.procuringEntity?.identifier?.legalName,
+        ])
+        const procuringEntityId = raw.procuringEntity?.identifier?.id
+        const procuringEntityRegion = raw.procuringEntity?.address?.region
+        const procuringEntityLocality = raw.procuringEntity?.address?.locality
+        const procuringEntityGeoText = this.joinValues([
+            procuringEntityRegion,
+            procuringEntityLocality,
+        ])
+
+        const participantNames = new Set<string>()
+        const participantIds = new Set<string>()
+        const participantRegions = new Set<string>()
+        const participantLocalities = new Set<string>()
+        const bidValues: number[] = []
+        const bidValueTexts: Array<string | number> = []
+        const bidUnitPriceTexts: string[] = []
+
+        for (const bid of bids) {
+            const tenderers = Array.isArray(bid?.tenderers) ? bid.tenderers : []
+            for (const tenderer of tenderers) {
+                if (tenderer?.name) {
+                    participantNames.add(tenderer.name)
+                }
+                if (tenderer?.identifier?.legalName) {
+                    participantNames.add(tenderer.identifier.legalName)
+                }
+                if (tenderer?.contactPoint?.name) {
+                    participantNames.add(tenderer.contactPoint.name)
+                }
+                if (tenderer?.identifier?.id) {
+                    participantIds.add(String(tenderer.identifier.id))
+                }
+                if (tenderer?.address?.region) {
+                    participantRegions.add(tenderer.address.region)
+                }
+                if (tenderer?.address?.locality) {
+                    participantLocalities.add(tenderer.address.locality)
+                }
+            }
+
+            const amount = bid?.value?.amount
+            const currency = bid?.value?.currency
+            if (amount !== undefined && amount !== null) {
+                bidValues.push(Number(amount))
+                bidValueTexts.push(String(amount))
+                if (currency) {
+                    bidValueTexts.push(currency)
+                }
+            }
+
+            const bidItems = Array.isArray(bid?.items) ? bid.items : []
+            const totalQuantity = bidItems.reduce((sum, item) => {
+                const quantity = Number(item?.quantity ?? 0)
+                return sum + (Number.isFinite(quantity) ? quantity : 0)
+            }, 0)
+            if (amount && totalQuantity > 0) {
+                const unitName =
+                    bidItems[0]?.unit?.name ?? bidItems[0]?.unit?.code
+                const unitPrice = amount / totalQuantity
+                const unitText = unitName ? `/${unitName}` : ''
+                const currencyText = currency ?? raw.value?.currency ?? 'UAH'
+                bidUnitPriceTexts.push(
+                    `${unitPrice.toFixed(2)} ${currencyText}${unitText}`,
+                )
+            }
+        }
+
+        const bidsCount = bids.length
+        const minBidValue = bidValues.length ? Math.min(...bidValues) : null
+        const maxBidValue = bidValues.length ? Math.max(...bidValues) : null
+
+        const winnerNames = new Set<string>()
+        const winnerIds = new Set<string>()
+        const winnerStatuses = new Set<string>()
+        const winnerValueAmounts: Array<string | number> = []
+        const winnerValueCurrencies: Array<string | number> = []
+
+        for (const award of awards) {
+            const suppliers = Array.isArray(award?.suppliers)
+                ? award.suppliers
+                : []
+            for (const supplier of suppliers) {
+                if (supplier?.name) {
+                    winnerNames.add(supplier.name)
+                }
+                if (supplier?.identifier?.id) {
+                    winnerIds.add(String(supplier.identifier.id))
+                }
+            }
+            if (award?.status) {
+                winnerStatuses.add(String(award.status))
+            }
+            if (award?.value?.amount !== undefined) {
+                winnerValueAmounts.push(String(award.value.amount))
+            }
+            if (award?.value?.currency) {
+                winnerValueCurrencies.push(String(award.value.currency))
+            }
+        }
+
+        const deliveryRegions = this.joinValues(
+            items.map((item) => item?.deliveryAddress?.region),
+        )
+        const deliveryLocalities = this.joinValues(
+            items.map((item) => item?.deliveryAddress?.locality),
+        )
+        const deliveryGeoText = this.joinValues([
+            deliveryRegions,
+            deliveryLocalities,
+        ])
+
+        const docsText = this.joinValues(
+            documents
+                .filter((doc) => {
+                    const format = String(doc?.format ?? '').toLowerCase()
+                    const title = String(doc?.title ?? '').toLowerCase()
+                    const isSignature =
+                        format.includes('pkcs7') ||
+                        title === 'sign.p7s' ||
+                        title.endsWith('.p7s')
+                    if (isSignature) {
+                        return false
+                    }
+                    if (format.includes('pdf') || format.includes('doc')) {
+                        return true
+                    }
+                    return (
+                        title.endsWith('.pdf') ||
+                        title.endsWith('.doc') ||
+                        title.endsWith('.docx')
+                    )
+                })
+                .flatMap((doc) => [doc?.documentType, doc?.title]),
+        )
+
+        const milestonesText = this.joinValues(
+            milestones.flatMap((milestone) => [
+                milestone?.title,
+                milestone?.description,
+            ]),
+        )
+
+        const paymentTermsText = milestonesText
+
+        const awardPeriodText = this.joinValues([
+            raw.awardPeriod?.startDate,
+            raw.awardPeriod?.endDate,
+        ])
+
+        const contractStatus = this.joinValues(
+            contracts.map((contract) => contract?.status),
+        )
+
+        const technicalRequirementsText = this.joinValues(
+            criteria.flatMap((criterion) => {
+                const groups = Array.isArray(criterion?.requirementGroups)
+                    ? criterion.requirementGroups
+                    : []
+                return groups.flatMap((group) => {
+                    const requirements = Array.isArray(group?.requirements)
+                        ? group.requirements
+                        : []
+                    return requirements.flatMap((req) => {
+                        const values = Array.isArray(req?.expectedValues)
+                            ? req.expectedValues
+                            : req?.expectedValue
+                              ? [req.expectedValue]
+                              : []
+                        return [req?.title, ...values]
+                    })
+                })
+            }),
+        )
+
+        const technicalResponsesText = this.joinValues(
+            bids.flatMap((bid) => {
+                const responses = Array.isArray(bid?.requirementResponses)
+                    ? bid.requirementResponses
+                    : []
+                return responses.flatMap((response) => {
+                    if (Array.isArray(response?.values)) {
+                        return response.values
+                    }
+                    if (response?.value !== undefined) {
+                        return [response.value]
+                    }
+                    return []
+                })
+            }),
+        )
+
         const fields = [
             { name: 'title', value: tender.title ?? '' },
             { name: 'description', value: tender.description ?? '' },
+            { name: 'status', value: raw.status ?? tender?.status ?? '' },
+            { name: 'datePublished', value: raw.datePublished ?? '' },
+            { name: 'dateModified', value: raw.dateModified ?? '' },
+            { name: 'valueAmount', value: raw.value?.amount ?? '' },
+            { name: 'valueCurrency', value: raw.value?.currency ?? '' },
             { name: 'cpv', value: tender.cpvCodes?.join(' ') ?? '' },
+            { name: 'cpvText', value: cpvText },
+            { name: 'itemsText', value: itemsText },
+            { name: 'itemsQuantityText', value: itemsQuantityText },
+            { name: 'itemsUnit', value: itemsUnit },
+            { name: 'procuringEntityName', value: procuringEntityName ?? '' },
+            { name: 'procuringEntityId', value: procuringEntityId ?? '' },
+            {
+                name: 'procuringEntityRegion',
+                value: procuringEntityRegion ?? '',
+            },
+            {
+                name: 'procuringEntityLocality',
+                value: procuringEntityLocality ?? '',
+            },
+            { name: 'procuringEntityGeoText', value: procuringEntityGeoText },
+            {
+                name: 'participantsNames',
+                value: this.joinValues(Array.from(participantNames)),
+            },
+            {
+                name: 'participantsIds',
+                value: this.joinValues(Array.from(participantIds)),
+            },
+            {
+                name: 'participantsRegions',
+                value: this.joinValues(Array.from(participantRegions)),
+            },
+            {
+                name: 'participantsLocalities',
+                value: this.joinValues(Array.from(participantLocalities)),
+            },
+            {
+                name: 'winnerNames',
+                value: this.joinValues(Array.from(winnerNames)),
+            },
+            {
+                name: 'winnerIds',
+                value: this.joinValues(Array.from(winnerIds)),
+            },
+            {
+                name: 'winnerAwardStatus',
+                value: this.joinValues(Array.from(winnerStatuses)),
+            },
+            {
+                name: 'winnerValueAmount',
+                value: this.joinValues(winnerValueAmounts),
+            },
+            {
+                name: 'winnerValueCurrency',
+                value: this.joinValues(winnerValueCurrencies),
+            },
+            { name: 'bidValuesText', value: this.joinValues(bidValueTexts) },
+            {
+                name: 'bidUnitPricesText',
+                value: this.joinValues(bidUnitPriceTexts),
+            },
+            { name: 'minBidValue', value: minBidValue ?? '' },
+            { name: 'maxBidValue', value: maxBidValue ?? '' },
+            { name: 'bidsCount', value: bidsCount ? String(bidsCount) : '' },
+            { name: 'deliveryRegion', value: deliveryRegions },
+            { name: 'deliveryLocality', value: deliveryLocalities },
+            { name: 'deliveryGeoText', value: deliveryGeoText },
+            { name: 'docsText', value: docsText },
+            { name: 'milestonesText', value: milestonesText },
+            { name: 'paymentTermsText', value: paymentTermsText },
+            {
+                name: 'procurementMethodType',
+                value: raw.procurementMethodType ?? '',
+            },
+            { name: 'awardCriteria', value: raw.awardCriteria ?? '' },
+            { name: 'awardPeriodText', value: awardPeriodText },
+            { name: 'contractStatus', value: contractStatus },
+            {
+                name: 'technicalRequirementsText',
+                value: technicalRequirementsText,
+            },
+            { name: 'technicalResponsesText', value: technicalResponsesText },
         ]
 
         const entries: Array<{
@@ -313,6 +638,34 @@ export class IndexingService {
         }
 
         return { entries, documentLength }
+    }
+
+    private joinValues(
+        values: Array<string | number | null | undefined>,
+    ): string {
+        const filtered = values
+            .flatMap((value) => {
+                if (value === null || value === undefined) {
+                    return []
+                }
+                if (Array.isArray(value)) {
+                    return value.map((entry) => String(entry))
+                }
+                return [String(value)]
+            })
+            .map((value) => value.trim())
+            .filter((value) => value.length > 0)
+
+        return Array.from(new Set(filtered)).join(' ')
+    }
+
+    private normalizeRawData(
+        rawData: Prisma.JsonValue | null,
+    ): Record<string, any> {
+        if (!rawData || typeof rawData !== 'object' || Array.isArray(rawData)) {
+            return {}
+        }
+        return rawData as Record<string, any>
     }
 
     private countTermFrequencies(terms: string[]): Map<string, number> {

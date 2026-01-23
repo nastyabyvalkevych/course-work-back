@@ -59,6 +59,7 @@ model CollectionStats {
   avgTitleLength     Float?
   avgDescriptionLength Float?
   avgCpvCodesLength  Float?
+  avgFieldLengths    Json?
   version            Int      @default(1)
   updatedAt          DateTime @updatedAt
 }
