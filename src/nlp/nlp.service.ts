@@ -16,6 +16,12 @@ export class NlpService {
         return this.lemmatize(filtered)
     }
 
+    async processQuery(text: string): Promise<string[]> {
+        const tokens = this.tokenize(text)
+        const filtered = this.removeStopWords(tokens)
+        return this.lemmatize(filtered)
+    }
+
     tokenize(text: string | number | boolean | null | undefined): string[] {
         if (text === null || text === undefined) {
             return []

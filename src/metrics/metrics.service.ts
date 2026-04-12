@@ -14,7 +14,9 @@ export class MetricsService {
         k: number = 10,
     ): number {
         const topK = results.slice(0, k)
-        const relevant = topK.filter((result) => this.isRelevant(result.tender.id, judgments))
+        const relevant = topK.filter((result) =>
+            this.isRelevant(result.tender.id, judgments),
+        )
         return k > 0 ? relevant.length / k : 0
     }
 
@@ -24,11 +26,15 @@ export class MetricsService {
         k: number = 10,
     ): number {
         const topK = results.slice(0, k)
-        const totalRelevant = judgments.filter((judgment) => judgment.relevanceScore >= 2).length
+        const totalRelevant = judgments.filter(
+            (judgment) => judgment.relevanceScore >= 2,
+        ).length
         if (!totalRelevant) {
             return 0
         }
-        const found = topK.filter((result) => this.isRelevant(result.tender.id, judgments)).length
+        const found = topK.filter((result) =>
+            this.isRelevant(result.tender.id, judgments),
+        ).length
         return found / totalRelevant
     }
 
@@ -36,7 +42,9 @@ export class MetricsService {
         results: SearchResultItem[],
         judgments: RelevanceJudgment[],
     ): number {
-        const totalRelevant = judgments.filter((judgment) => judgment.relevanceScore >= 2).length
+        const totalRelevant = judgments.filter(
+            (judgment) => judgment.relevanceScore >= 2,
+        ).length
         if (!totalRelevant) {
             return 0
         }
@@ -54,7 +62,10 @@ export class MetricsService {
         return sumPrecision / totalRelevant
     }
 
-    private isRelevant(tenderId: number, judgments: RelevanceJudgment[]): boolean {
+    private isRelevant(
+        tenderId: number,
+        judgments: RelevanceJudgment[],
+    ): boolean {
         const judgment = judgments.find((item) => item.tenderId === tenderId)
         return Boolean(judgment && judgment.relevanceScore >= 2)
     }

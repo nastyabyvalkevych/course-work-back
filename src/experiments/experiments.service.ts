@@ -31,12 +31,6 @@ export class ExperimentsService {
             throw new Error('No test queries found.')
         }
 
-        if (config.usesMultifield) {
-            this.logger.warn(
-                'BM25F is not implemented yet. Falling back to BM25.',
-            )
-        }
-
         let sumPrecision = 0
         let sumRecall = 0
         let sumAP = 0

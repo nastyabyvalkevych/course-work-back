@@ -1,5 +1,6 @@
-import { Body, Controller, Get, Logger, Post } from '@nestjs/common'
+import { Body, Controller, Get, Logger, Post, UseGuards } from '@nestjs/common'
 
+import { ApiKeyGuard } from '../auth/api-key.guard'
 import { IndexingService } from './indexing.service'
 import { IndexRequestDto } from './dto/index-request.dto'
 
@@ -8,6 +9,8 @@ export class IndexingController {
     constructor(private readonly indexingService: IndexingService) {}
     private readonly logger = new Logger(IndexingController.name)
 
+    // P3.9: full-reindex destroys and rebuilds the inverted index — guarded.
+    @UseGuards(ApiKeyGuard)
     @Post('index')
     async indexTenders(@Body() dto: IndexRequestDto) {
         const startTime = Date.now()
@@ -16,7 +19,8 @@ export class IndexingController {
             await this.indexingService.clearIndex()
         }
 
-        const tenderIds = dto.tenderIds ?? (await this.indexingService.getAllTenderIds())
+        const tenderIds =
+            dto.tenderIds ?? (await this.indexingService.getAllTenderIds())
         const total = tenderIds.length
         const batchSize = 100
 
@@ -27,7 +31,9 @@ export class IndexingController {
                 const batch = tenderIds.slice(i, i + batchSize)
                 await this.indexingService.indexTendersBatch(batch)
                 this.indexingService.updateJobProgress(batch.length)
-                this.logger.log(`Indexed ${Math.min(i + batch.length, total)}/${total} tenders`)
+                this.logger.log(
+                    `Indexed ${Math.min(i + batch.length, total)}/${total} tenders`,
+                )
             }
 
             await this.indexingService.updateCollectionStats()
@@ -50,6 +56,7 @@ export class IndexingController {
         return this.indexingService.getStatus()
     }
 
+    @UseGuards(ApiKeyGuard)
     @Post('update-stats')
     async updateStats() {
         await this.indexingService.updateCollectionStats()

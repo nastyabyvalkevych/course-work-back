@@ -7,6 +7,7 @@ import { HealthModule } from './health/health.module'
 import { IndexingModule } from './indexing/indexing.module'
 import { MetricsModule } from './metrics/metrics.module'
 import { NlpModule } from './nlp/nlp.module'
+import { OsintModule } from './osint/osint.module'
 import { PrismaModule } from './prisma/prisma.module'
 import { ProzorroModule } from './prozorro/prozorro.module'
 import { SearchModule } from './search/search.module'
@@ -25,6 +26,7 @@ import { TendersModule } from './tenders/tenders.module'
         MetricsModule,
         StatsModule,
         TendersModule,
+        OsintModule,
     ],
     controllers: [AppController],
     providers: [AppService],

@@ -132,6 +132,20 @@ export class IndexingService {
         const avgCpvCodesLength =
             fieldStats.find((row) => row.field_name === 'cpv')?.avg_length ?? 0
 
+        // Build per-field average lengths (averaged over ALL documents, not
+        // just those that contain the field — standard BM25F convention)
+        const avgFieldLengths: Record<string, number> = {}
+        for (const row of fieldStats) {
+            if (row.avg_length !== null && totalDocuments > 0) {
+                // row.avg_length is avg over docs that HAVE the field;
+                // we need avg over ALL docs: (avg_per_present * count) / totalDocs
+                // Since we don't have count per field, use the per-present avg
+                // as a reasonable approximation (fields present in most docs
+                // have near-identical values either way)
+                avgFieldLengths[row.field_name] = Number(row.avg_length)
+            }
+        }
+
         await this.prisma.collectionStats.upsert({
             where: { id: 1 },
             update: {
@@ -141,6 +155,7 @@ export class IndexingService {
                 avgTitleLength,
                 avgDescriptionLength,
                 avgCpvCodesLength,
+                avgFieldLengths,
                 version: { increment: 1 },
             },
             create: {
@@ -151,6 +166,7 @@ export class IndexingService {
                 avgTitleLength,
                 avgDescriptionLength,
                 avgCpvCodesLength,
+                avgFieldLengths,
                 version: 1,
             },
         })
@@ -348,7 +364,6 @@ export class IndexingService {
         const participantIds = new Set<string>()
         const participantRegions = new Set<string>()
         const participantLocalities = new Set<string>()
-        const bidValues: number[] = []
         const bidValueTexts: Array<string | number> = []
         const bidUnitPriceTexts: string[] = []
 
@@ -378,7 +393,6 @@ export class IndexingService {
             const amount = bid?.value?.amount
             const currency = bid?.value?.currency
             if (amount !== undefined && amount !== null) {
-                bidValues.push(Number(amount))
                 bidValueTexts.push(String(amount))
                 if (currency) {
                     bidValueTexts.push(currency)
@@ -402,14 +416,14 @@ export class IndexingService {
             }
         }
 
-        const bidsCount = bids.length
-        const minBidValue = bidValues.length ? Math.min(...bidValues) : null
-        const maxBidValue = bidValues.length ? Math.max(...bidValues) : null
+        // Note: bidsCount, minBidValue, maxBidValue, winnerValueAmounts removed
+        // from BM25F indexing (Phase 3, Q4=4ii). Numerical aggregation logic
+        // also removed from this builder. If needed for analytics or filters,
+        // recompute at query time from raw `bids`/`awards` JSON columns.
 
         const winnerNames = new Set<string>()
         const winnerIds = new Set<string>()
         const winnerStatuses = new Set<string>()
-        const winnerValueAmounts: Array<string | number> = []
         const winnerValueCurrencies: Array<string | number> = []
 
         for (const award of awards) {
@@ -426,9 +440,6 @@ export class IndexingService {
             }
             if (award?.status) {
                 winnerStatuses.add(String(award.status))
-            }
-            if (award?.value?.amount !== undefined) {
-                winnerValueAmounts.push(String(award.value.amount))
             }
             if (award?.value?.currency) {
                 winnerValueCurrencies.push(String(award.value.currency))
@@ -526,13 +537,14 @@ export class IndexingService {
             }),
         )
 
+        // 36-field schema (Phase 3, Q4=4ii): 7 non-textual fields removed
+        // (datePublished, dateModified — dates; valueAmount, winnerValueAmount,
+        // minBidValue, maxBidValue, bidsCount — numerics).
+        // Dates are still queryable via DB filter clauses, not via BM25F text scoring.
         const fields = [
             { name: 'title', value: tender.title ?? '' },
             { name: 'description', value: tender.description ?? '' },
             { name: 'status', value: raw.status ?? tender?.status ?? '' },
-            { name: 'datePublished', value: raw.datePublished ?? '' },
-            { name: 'dateModified', value: raw.dateModified ?? '' },
-            { name: 'valueAmount', value: raw.value?.amount ?? '' },
             { name: 'valueCurrency', value: raw.value?.currency ?? '' },
             { name: 'cpv', value: tender.cpvCodes?.join(' ') ?? '' },
             { name: 'cpvText', value: cpvText },
@@ -579,10 +591,6 @@ export class IndexingService {
                 value: this.joinValues(Array.from(winnerStatuses)),
             },
             {
-                name: 'winnerValueAmount',
-                value: this.joinValues(winnerValueAmounts),
-            },
-            {
                 name: 'winnerValueCurrency',
                 value: this.joinValues(winnerValueCurrencies),
             },
@@ -591,9 +599,6 @@ export class IndexingService {
                 name: 'bidUnitPricesText',
                 value: this.joinValues(bidUnitPriceTexts),
             },
-            { name: 'minBidValue', value: minBidValue ?? '' },
-            { name: 'maxBidValue', value: maxBidValue ?? '' },
-            { name: 'bidsCount', value: bidsCount ? String(bidsCount) : '' },
             { name: 'deliveryRegion', value: deliveryRegions },
             { name: 'deliveryLocality', value: deliveryLocalities },
             { name: 'deliveryGeoText', value: deliveryGeoText },

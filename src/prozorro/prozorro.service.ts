@@ -89,7 +89,10 @@ export class ProzorroService {
     async syncTenders(params: { since?: string; limit?: number }) {
         const sinceDate = params.since ? new Date(params.since) : undefined
         const limit = params.limit ?? 100
-        const listResponse = await this.fetchTenderList({ limit, reverse: true })
+        const listResponse = await this.fetchTenderList({
+            limit,
+            reverse: true,
+        })
         const tenders = listResponse.data ?? []
 
         let stored = 0
@@ -114,7 +117,9 @@ export class ProzorroService {
                 }
 
                 const tenderData = this.parseTenderData(data)
-                const storedModified = this.normalizeDate(tenderData.dateModified)
+                const storedModified = this.normalizeDate(
+                    tenderData.dateModified,
+                )
                 if (storedModified) {
                     if (!newestModified || storedModified > newestModified) {
                         newestModified = storedModified
@@ -257,7 +262,9 @@ export class ProzorroService {
         return Number.isNaN(parsed.getTime()) ? null : parsed
     }
 
-    private normalizeDate(value: Date | string | null | undefined): Date | null {
+    private normalizeDate(
+        value: Date | string | null | undefined,
+    ): Date | null {
         if (!value) {
             return null
         }
@@ -273,7 +280,11 @@ export class ProzorroService {
         reverse: boolean,
     ): string | null {
         if (reverse) {
-            return listResponse?.prev_page?.offset ?? listResponse?.next_page?.offset ?? null
+            return (
+                listResponse?.prev_page?.offset ??
+                listResponse?.next_page?.offset ??
+                null
+            )
         }
         return listResponse?.next_page?.offset ?? null
     }

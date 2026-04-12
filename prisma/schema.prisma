@@ -100,3 +100,67 @@ model ExperimentResult {
   numTestQueries   Int
   createdAt        DateTime @default(now())
 }
+
+// OSINT Analysis Models (OECD bid-rigging indicators)
+
+model OsintReport {
+  id            Int      @id @default(autoincrement())
+  generatedAt   DateTime @default(now())
+  numTenders    Int
+  metadata      Json     // thresholds, versions, etc.
+
+  // Summary stats
+  singleBidderCount    Int
+  singleBidderRatio    Float
+  multiBidderCount     Int
+
+  // Aggregated data (JSON for flexibility)
+  topSingleBidderEntities Json  // [{edrpou, name, count}]
+  coParticipationPairs    Json  // [{edrpouA, edrpouB, nameA, nameB, count, tenderIds}]
+  winRateAnomalies        Json  // [{edrpou, name, bids, wins, rate}]
+  regionalDominance       Json  // [{region, dominantEdrpou, dominantName, wins, total, pct}]
+  hhiPerCpv               Json  // [{cpvDivision, totalAwards, uniqueSuppliers, hhi, level}]
+  bidRotationCohorts      Json  // [{cohortEdrs, numTenders, winnersCount, uniformity}]
+
+  @@index([generatedAt])
+}
+
+model SupplierOsintStats {
+  id              Int      @id @default(autoincrement())
+  edrpou          String   @unique
+  name            String?
+
+  // Win rate stats
+  totalBids       Int      @default(0)
+  totalWins       Int      @default(0)
+  winRate         Float    @default(0)
+
+  // Co-participation (top partners)
+  topPartners     Json?    // [{edrpou, name, count}]
+
+  // Regional stats
+  regionsActive   String[] // regions where this supplier participates
+  dominantRegion  String?  // region where they dominate (if any)
+
+  updatedAt       DateTime @updatedAt
+
+  @@index([winRate])
+  @@index([totalWins])
+}
+
+model ProcuringEntityOsintStats {
+  id                  Int      @id @default(autoincrement())
+  edrpou              String   @unique
+  name                String?
+  region              String?
+
+  // Single bidder stats
+  totalTenders        Int      @default(0)
+  singleBidderTenders Int      @default(0)
+  singleBidderRatio   Float    @default(0)
+
+  updatedAt           DateTime @updatedAt
+
+  @@index([singleBidderRatio])
+  @@index([singleBidderTenders])
+}

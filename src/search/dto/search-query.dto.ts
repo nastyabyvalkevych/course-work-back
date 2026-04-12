@@ -34,14 +34,14 @@ export class SearchQueryDto {
     @IsNumber()
     @Min(0)
     @Max(5)
-    k1?: number = 0.5 // Optimized for Prozorro tenders
+    k1?: number
 
     @IsOptional()
     @Type(() => Number)
     @IsNumber()
     @Min(0)
     @Max(1)
-    b?: number = 0.0 // Optimized: no length normalization needed
+    b?: number
 
     @IsOptional()
     @IsString()
@@ -66,7 +66,17 @@ export class SearchQueryDto {
     dateTo?: string
 
     @IsOptional()
-    @Transform(({ value }) => value === 'true' || value === true)
+    @Transform(({ value }) =>
+        value === undefined ? undefined : value === 'true' || value === true,
+    )
     @IsBoolean()
     useMultifield?: boolean
+
+    @IsOptional()
+    @IsString()
+    profile?: 'bm25f_default' | 'da_bm25f_combined'
+
+    @IsOptional()
+    @IsString()
+    sort?: 'score' | 'date'
 }

@@ -37,6 +37,13 @@ export class RedisService implements OnModuleDestroy {
         await this.client.set(key, JSON.stringify(value), 'EX', ttlSeconds)
     }
 
+    async del(key: string): Promise<void> {
+        if (!this.client) {
+            return
+        }
+        await this.client.del(key)
+    }
+
     async onModuleDestroy() {
         if (!this.client) {
             return
