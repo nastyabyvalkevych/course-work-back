@@ -187,7 +187,9 @@ export class OsintService {
         // 2. Price Clustering
         const bidAmounts = this.extractBidValues(rawData)
         if (bidAmounts.length >= 2) {
-            const amounts = bidAmounts.map((b) => b.amount).sort((a, b) => a - b)
+            const amounts = bidAmounts
+                .map((b) => b.amount)
+                .sort((a, b) => a - b)
             const minAmount = amounts[0]
             const maxAmount = amounts[amounts.length - 1]
             const spreadPct =
@@ -212,9 +214,10 @@ export class OsintService {
         // 3. Winner stats (from pre-computed)
         const { winnerId } = this.extractWinner(rawData)
         if (winnerId) {
-            const supplierStats = await this.prisma.supplierOsintStats.findUnique({
-                where: { edrpou: winnerId },
-            })
+            const supplierStats =
+                await this.prisma.supplierOsintStats.findUnique({
+                    where: { edrpou: winnerId },
+                })
             if (
                 supplierStats &&
                 supplierStats.totalBids >= THRESHOLDS.WINRATE_MIN_BIDS &&
@@ -253,7 +256,8 @@ export class OsintService {
                 orderBy: { generatedAt: 'desc' },
             })
             if (report) {
-                const pairs = report.coParticipationPairs as CoParticipationPair[]
+                const pairs =
+                    report.coParticipationPairs as CoParticipationPair[]
                 for (let i = 0; i < participantEdrs.length; i++) {
                     for (let j = i + 1; j < participantEdrs.length; j++) {
                         const a = participantEdrs[i]
@@ -287,14 +291,35 @@ export class OsintService {
         this.logger.log('Starting OSINT report generation...')
         const startTime = Date.now()
 
-        const tenders = await this.prisma.tender.findMany({
-            select: {
-                id: true,
-                prozorroId: true,
-                cpvCodes: true,
-                rawData: true,
-            },
-        })
+        // Fetch in batches to avoid Prisma memory/encoding issues with large JSON blobs
+        const BATCH_SIZE = 1000
+        const totalCount = await this.prisma.tender.count()
+        this.logger.log(
+            `Total tenders: ${totalCount}, fetching in batches of ${BATCH_SIZE}`,
+        )
+
+        const tenders: Array<{
+            id: number
+            prozorroId: string
+            cpvCodes: string[]
+            rawData: Prisma.JsonValue
+        }> = []
+
+        for (let skip = 0; skip < totalCount; skip += BATCH_SIZE) {
+            const batch = await this.prisma.tender.findMany({
+                select: {
+                    id: true,
+                    prozorroId: true,
+                    cpvCodes: true,
+                    rawData: true,
+                },
+                skip,
+                take: BATCH_SIZE,
+                orderBy: { id: 'asc' },
+            })
+            tenders.push(...batch)
+            this.logger.log(`Fetched ${tenders.length}/${totalCount} tenders`)
+        }
 
         this.logger.log(`Loaded ${tenders.length} tenders`)
 
@@ -327,17 +352,24 @@ export class OsintService {
                 singleBidderCount: singleBidderStats.singleBidderCount,
                 singleBidderRatio: singleBidderStats.singleBidderRatio,
                 multiBidderCount: singleBidderStats.multiBidderCount,
-                topSingleBidderEntities: singleBidderStats.topEntities as Prisma.InputJsonValue,
-                coParticipationPairs: coParticipation.pairs as Prisma.InputJsonValue,
+                topSingleBidderEntities:
+                    singleBidderStats.topEntities as Prisma.InputJsonValue,
+                coParticipationPairs:
+                    coParticipation.pairs as Prisma.InputJsonValue,
                 winRateAnomalies: winRates.anomalies as Prisma.InputJsonValue,
-                regionalDominance: regionalDominance.entries as Prisma.InputJsonValue,
+                regionalDominance:
+                    regionalDominance.entries as Prisma.InputJsonValue,
                 hhiPerCpv: hhiData.entries as Prisma.InputJsonValue,
-                bidRotationCohorts: bidRotation.cohorts as Prisma.InputJsonValue,
+                bidRotationCohorts:
+                    bidRotation.cohorts as Prisma.InputJsonValue,
             },
         })
 
         // Update supplier stats
-        await this.updateSupplierStats(winRates.allSuppliers, coParticipation.partnerMap)
+        await this.updateSupplierStats(
+            winRates.allSuppliers,
+            coParticipation.partnerMap,
+        )
 
         // Update procuring entity stats
         await this.updateProcuringEntityStats(singleBidderStats.byEntity)
@@ -362,7 +394,8 @@ export class OsintService {
         for (const tender of tenders) {
             const rawData = tender.rawData as RawTender
             const participants = this.extractParticipants(rawData)
-            const { entityId, entityName } = this.extractProcuringEntity(rawData)
+            const { entityId, entityName } =
+                this.extractProcuringEntity(rawData)
 
             if (Object.keys(participants).length === 1) {
                 singleBidderCount++
@@ -381,7 +414,11 @@ export class OsintService {
 
         const total = singleBidderCount + multiBidderCount
         const topEntities = Array.from(byEntity.entries())
-            .map(([edrpou, data]) => ({ edrpou, name: data.name, count: data.count }))
+            .map(([edrpou, data]) => ({
+                edrpou,
+                name: data.name,
+                count: data.count,
+            }))
             .sort((a, b) => b.count - a.count)
             .slice(0, 20)
 
@@ -440,8 +477,10 @@ export class OsintService {
             .slice(0, 50)
 
         // Build partner map for supplier stats
-        const partnerMap: Map<string, Map<string, { name: string; count: number }>> =
-            new Map()
+        const partnerMap: Map<
+            string,
+            Map<string, { name: string; count: number }>
+        > = new Map()
         for (const pair of pairs) {
             // A -> B
             if (!partnerMap.has(pair.edrpouA)) {
@@ -546,7 +585,10 @@ export class OsintService {
         const entries: RegionalDominanceEntry[] = []
 
         for (const [region, winners] of regionWinners.entries()) {
-            const total = Array.from(winners.values()).reduce((a, b) => a + b, 0)
+            const total = Array.from(winners.values()).reduce(
+                (a, b) => a + b,
+                0,
+            )
             if (total < THRESHOLDS.REGIONAL_DOMINANCE_MIN_REGION_SIZE) continue
 
             const [topWinner, topCount] = Array.from(winners.entries()).sort(
@@ -610,10 +652,13 @@ export class OsintService {
             if (totalAwards < THRESHOLDS.HHI_MIN_TENDERS_PER_DIVISION) continue
 
             // HHI = sum of squared market shares (as percentages)
-            const hhi = Array.from(supplierWins.values()).reduce((sum, wins) => {
-                const share = (wins / totalAwards) * 100
-                return sum + share * share
-            }, 0)
+            const hhi = Array.from(supplierWins.values()).reduce(
+                (sum, wins) => {
+                    const share = (wins / totalAwards) * 100
+                    return sum + share * share
+                },
+                0,
+            )
 
             let level: HhiEntry['level']
             if (hhi >= THRESHOLDS.HHI_HIGHLY_CONCENTRATED) {
@@ -635,7 +680,8 @@ export class OsintService {
                 hhi: Math.round(hhi * 10) / 10,
                 level,
                 topSupplierEdrpou,
-                topSupplierSharePct: Math.round((topWins / totalAwards) * 1000) / 10,
+                topSupplierSharePct:
+                    Math.round((topWins / totalAwards) * 1000) / 10,
             })
         }
 
@@ -661,7 +707,8 @@ export class OsintService {
             const participants = this.extractParticipants(rawData)
 
             if (
-                Object.keys(participants).length < THRESHOLDS.BID_ROTATION_MIN_COHORT_SIZE
+                Object.keys(participants).length <
+                THRESHOLDS.BID_ROTATION_MIN_COHORT_SIZE
             ) {
                 continue
             }
@@ -725,7 +772,10 @@ export class OsintService {
             }
         }
 
-        cohorts.sort((a, b) => b.uniformity - a.uniformity || b.numTenders - a.numTenders)
+        cohorts.sort(
+            (a, b) =>
+                b.uniformity - a.uniformity || b.numTenders - a.numTenders,
+        )
 
         return { cohorts: cohorts.slice(0, 30) }
     }
@@ -826,7 +876,11 @@ export class OsintService {
             const partners = partnerMap.get(edrpou)
             const topPartners = partners
                 ? Array.from(partners.entries())
-                      .map(([e, p]) => ({ edrpou: e, name: p.name, count: p.count }))
+                      .map(([e, p]) => ({
+                          edrpou: e,
+                          name: p.name,
+                          count: p.count,
+                      }))
                       .sort((a, b) => b.count - a.count)
                       .slice(0, 5)
                 : []

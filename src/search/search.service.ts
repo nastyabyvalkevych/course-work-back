@@ -303,7 +303,9 @@ export class SearchService {
     private resolveSearchOptions(options: SearchOptions): SearchOptions {
         const effectiveProfile =
             options.profile ??
-            (options.useMultifield === false ? undefined : DEFAULT_SEARCH_PROFILE)
+            (options.useMultifield === false
+                ? undefined
+                : DEFAULT_SEARCH_PROFILE)
         const filters = Object.fromEntries(
             Object.entries(options.filters ?? {}).filter(
                 ([, value]) => value !== undefined,
@@ -507,9 +509,7 @@ export class SearchService {
                 const denominator =
                     entry.termFrequency +
                     params.k1 *
-                        (1 -
-                            fieldB +
-                            fieldB * (fieldLength / avgFieldLength))
+                        (1 - fieldB + fieldB * (fieldLength / avgFieldLength))
                 let contribution = weight * (numerator / denominator)
 
                 if (exactMatchFields.has(entry.fieldName)) {
@@ -545,7 +545,10 @@ export class SearchService {
                 select: { id: true, documentLength: true },
             }),
             this.prisma.tenderIndex.findMany({
-                where: { tenderId: { in: tenderIds }, term: { in: queryTerms } },
+                where: {
+                    tenderId: { in: tenderIds },
+                    term: { in: queryTerms },
+                },
             }),
             this.prisma.termStatistics.findMany({
                 where: { term: { in: queryTerms } },
@@ -615,7 +618,10 @@ export class SearchService {
         const [fieldLengthsAll, indexEntries, termStats] = await Promise.all([
             this.getFieldLengthsBatch(tenderIds),
             this.prisma.tenderIndex.findMany({
-                where: { tenderId: { in: tenderIds }, term: { in: queryTerms } },
+                where: {
+                    tenderId: { in: tenderIds },
+                    term: { in: queryTerms },
+                },
             }),
             this.prisma.termStatistics.findMany({
                 where: { term: { in: queryTerms } },
@@ -639,6 +645,8 @@ export class SearchService {
             const entries = indexByTender.get(tenderId) ?? []
 
             let totalScore = 0
+            let matchedTermCount = 0
+
             for (const term of queryTerms) {
                 const stat = termStatsMap.get(term)
                 if (!stat) continue
@@ -659,7 +667,9 @@ export class SearchService {
                     const denominator =
                         entry.termFrequency +
                         params.k1 *
-                            (1 - fieldB + fieldB * (fieldLength / avgFieldLength))
+                            (1 -
+                                fieldB +
+                                fieldB * (fieldLength / avgFieldLength))
                     let contribution = weight * (numerator / denominator)
 
                     if (exactMatchFields.has(entry.fieldName)) {
@@ -669,10 +679,18 @@ export class SearchService {
                     fieldScore += contribution
                 }
 
+                if (fieldScore > 0) {
+                    matchedTermCount++
+                }
                 totalScore += stat.idf * fieldScore
             }
 
-            return { tenderId, score: totalScore }
+            // Coordination factor: boost documents that match more query terms
+            const coordFactor =
+                queryTerms.length > 0 ? matchedTermCount / queryTerms.length : 1
+            const finalScore = totalScore * coordFactor
+
+            return { tenderId, score: finalScore }
         })
     }
 
@@ -684,7 +702,11 @@ export class SearchService {
         }
 
         const rows = await this.prisma.$queryRaw<
-            Array<{ tender_id: number; field_name: string; field_length: number }>
+            Array<{
+                tender_id: number
+                field_name: string
+                field_length: number
+            }>
         >(
             Prisma.sql`
                 SELECT "tenderId" AS tender_id,

@@ -326,7 +326,6 @@ export class IndexingService {
         const milestones = Array.isArray(raw.milestones) ? raw.milestones : []
         const contracts = Array.isArray(raw.contracts) ? raw.contracts : []
         const criteria = Array.isArray(raw.criteria) ? raw.criteria : []
-
         const itemsText = this.joinValues(
             items.map((item) => item?.description),
         )
