@@ -26,4 +26,20 @@ export class ProzorroController {
     async syncTenders(@Body() body: { since?: string; limit?: number }) {
         return this.prozorroService.syncTenders(body)
     }
+
+    /**
+     * Fetch and upsert an explicit list of tenders by their CDB hex ids.
+     * Used by the AMCU-tenderer collector (evaluation/collect_amcu_tenderers.py):
+     * the collector resolves participant EDRPOU -> tenderID (portal search API)
+     * -> hex id (CDB feed), then hands the ids here for storage.
+     */
+    @Post('fetch-by-ids')
+    async fetchTendersByIds(
+        @Body() body: { ids: string[]; pauseMs?: number },
+    ) {
+        return this.prozorroService.fetchTendersByIds(
+            body?.ids ?? [],
+            body?.pauseMs,
+        )
+    }
 }

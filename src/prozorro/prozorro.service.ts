@@ -156,6 +156,80 @@ export class ProzorroService {
         }
     }
 
+    /**
+     * Upsert a list of tenders by CDB hex id. Ids already present in the
+     * local mirror are skipped unless `refresh` is requested by the caller
+     * (not exposed yet — collector runs are idempotent by design).
+     * A small pause between CDB requests keeps us under the public rate limit.
+     */
+    async fetchTendersByIds(ids: string[], pauseMs = 250) {
+        const unique = Array.from(
+            new Set(
+                (ids ?? []).filter(
+                    (id) => typeof id === 'string' && /^[0-9a-f]{32}$/.test(id),
+                ),
+            ),
+        )
+        if (!unique.length) {
+            return {
+                requested: ids?.length ?? 0,
+                stored: 0,
+                skipped: 0,
+                failed: 0,
+                failedIds: [],
+                message: 'No valid ids.',
+            }
+        }
+
+        const existing = await this.prisma.tender.findMany({
+            where: { prozorroId: { in: unique } },
+            select: { prozorroId: true },
+        })
+        const existingSet = new Set(existing.map((t) => t.prozorroId))
+
+        let stored = 0
+        let skipped = 0
+        const failedIds: string[] = []
+
+        for (const id of unique) {
+            if (existingSet.has(id)) {
+                skipped += 1
+                continue
+            }
+            try {
+                const details = await this.fetchTenderById(id)
+                if (!details?.data) {
+                    failedIds.push(id)
+                    continue
+                }
+                const tenderData = this.parseTenderData(details.data)
+                await this.prisma.tender.upsert({
+                    where: { prozorroId: tenderData.prozorroId },
+                    create: tenderData,
+                    update: tenderData,
+                })
+                stored += 1
+            } catch (error) {
+                this.logger.warn(
+                    `fetch-by-ids: failed for ${id}: ${String(error)}`,
+                )
+                failedIds.push(id)
+            }
+            if (pauseMs > 0) {
+                await new Promise((resolve) => setTimeout(resolve, pauseMs))
+            }
+        }
+
+        return {
+            requested: ids.length,
+            stored,
+            skipped,
+            failed: failedIds.length,
+            failedIds,
+            message: 'fetch-by-ids completed.',
+        }
+    }
+
     async fetchTenderById(prozorroId: string) {
         const url = `${this.baseUrl}/tenders/${prozorroId}`
         return this.requestJson(url)

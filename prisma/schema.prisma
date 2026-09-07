@@ -24,6 +24,8 @@ model Tender {
   createdAt       DateTime       @default(now())
   updatedAt       DateTime       @updatedAt
   tenderIndexes   TenderIndex[]
+  participations  Participation[]
+  sample          TenderSample?
 }
 
 model TenderIndex {
@@ -163,4 +165,79 @@ model ProcuringEntityOsintStats {
 
   @@index([singleBidderRatio])
   @@index([singleBidderTenders])
+}
+
+// ---------------------------------------------------------------------------
+// AMCU bid-rigging labels and graph-building tables (master thesis, Sept 2026)
+// ---------------------------------------------------------------------------
+
+/// One row per (decision, company, court event) from the AMCU consolidated
+/// register "Зведені відомості про рішення органів Комітету ... спотворення
+/// результатів торгів". Loaded by evaluation/load_amcu_labels.py.
+model AmcuDecision {
+  id              Int       @id @default(autoincrement())
+  decisionNumber  String
+  decisionDate    DateTime
+  body            String?   // орган АМКУ, що прийняв рішення
+  edrpou          String    // ЄДРПОУ (8) або ІПН ФОП (10)
+  companyName     String?
+  courtCaseNumber String?
+  courtName       String?
+  courtDate       DateTime?
+  courtContent    String?   // зміст рішення суду (скасовано / відмовлено ...)
+  reviewNumber    String?   // № рішення органу АМКУ за результатами перегляду
+  reviewDate      DateTime?
+  reviewContent   String?
+  notes           String?
+  registerVersion String    // дата файлу реєстру, напр. 2026-08-31
+  createdAt       DateTime  @default(now())
+
+  @@unique([registerVersion, decisionNumber, decisionDate, edrpou, courtName, courtDate], name: "amcu_row_key")
+  @@index([edrpou])
+  @@index([decisionDate])
+}
+
+/// Flat "who took part in which tender" table derived from Tender.rawData
+/// (bids[].tenderers[], awards[].suppliers[]). Built by
+/// evaluation/build_participations.py; source of graph edges.
+model Participation {
+  id               Int       @id @default(autoincrement())
+  tenderId         Int
+  tender           Tender    @relation(fields: [tenderId], references: [id], onDelete: Cascade)
+  prozorroTenderId String    // UA-YYYY-MM-DD-NNNNNN-x
+  edrpou           String
+  name             String?
+  role             String    // bidder | winner
+  lotId            String?
+  bidAmount        Float?
+  bidDate          DateTime?
+  bidStatus        String?
+  isWinner         Boolean   @default(false)
+  datePublished    DateTime?
+
+  @@index([edrpou])
+  @@index([tenderId])
+  @@index([prozorroTenderId])
+  @@index([edrpou, datePublished])
+}
+
+/// Membership of a tender in the thesis dataset: positive (has a sanctioned
+/// participant) or unlabeled (stratified sample). Built by
+/// evaluation/sample_unlabeled.py finalize.
+model TenderSample {
+  id                    Int      @id @default(autoincrement())
+  tenderId              Int      @unique
+  tender                Tender   @relation(fields: [tenderId], references: [id], onDelete: Cascade)
+  sampleGroup           String   // positive | unlabeled
+  year                  Int
+  procurementMethodType String?
+  cpvDivision           String?
+  bidsCount             Int      @default(0)
+  hasSanctioned         Boolean  @default(false)
+  sanctionedEdrpous     String[]
+  sampleVersion         String
+  createdAt             DateTime @default(now())
+
+  @@index([sampleGroup])
+  @@index([year, procurementMethodType])
 }
