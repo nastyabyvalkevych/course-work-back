@@ -35,11 +35,12 @@ export class ProzorroController {
      */
     @Post('fetch-by-ids')
     async fetchTendersByIds(
-        @Body() body: { ids: string[]; pauseMs?: number },
+        @Body() body: { ids: string[]; pauseMs?: number; concurrency?: number },
     ) {
         return this.prozorroService.fetchTendersByIds(
             body?.ids ?? [],
             body?.pauseMs,
+            body?.concurrency,
         )
     }
 }

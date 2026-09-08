@@ -162,7 +162,7 @@ export class ProzorroService {
      * (not exposed yet — collector runs are idempotent by design).
      * A small pause between CDB requests keeps us under the public rate limit.
      */
-    async fetchTendersByIds(ids: string[], pauseMs = 250) {
+    async fetchTendersByIds(ids: string[], pauseMs = 250, concurrency = 1) {
         const unique = Array.from(
             new Set(
                 (ids ?? []).filter(
@@ -190,35 +190,46 @@ export class ProzorroService {
         let stored = 0
         let skipped = 0
         const failedIds: string[] = []
-
-        for (const id of unique) {
+        const queue = unique.filter((id) => {
             if (existingSet.has(id)) {
                 skipped += 1
-                continue
+                return false
             }
-            try {
-                const details = await this.fetchTenderById(id)
-                if (!details?.data) {
-                    failedIds.push(id)
-                    continue
+            return true
+        })
+
+        const worker = async () => {
+            while (queue.length) {
+                const id = queue.shift()
+                if (!id) {
+                    break
                 }
-                const tenderData = this.parseTenderData(details.data)
-                await this.prisma.tender.upsert({
-                    where: { prozorroId: tenderData.prozorroId },
-                    create: tenderData,
-                    update: tenderData,
-                })
-                stored += 1
-            } catch (error) {
-                this.logger.warn(
-                    `fetch-by-ids: failed for ${id}: ${String(error)}`,
-                )
-                failedIds.push(id)
-            }
-            if (pauseMs > 0) {
-                await new Promise((resolve) => setTimeout(resolve, pauseMs))
+                try {
+                    const details = await this.fetchTenderById(id)
+                    if (!details?.data) {
+                        failedIds.push(id)
+                        continue
+                    }
+                    const tenderData = this.parseTenderData(details.data)
+                    await this.prisma.tender.upsert({
+                        where: { prozorroId: tenderData.prozorroId },
+                        create: tenderData,
+                        update: tenderData,
+                    })
+                    stored += 1
+                } catch (error) {
+                    this.logger.warn(
+                        `fetch-by-ids: failed for ${id}: ${String(error).slice(0, 300)}`,
+                    )
+                    failedIds.push(id)
+                }
+                if (pauseMs > 0) {
+                    await new Promise((resolve) => setTimeout(resolve, pauseMs))
+                }
             }
         }
+        const workers = Math.max(1, Math.min(concurrency, 8))
+        await Promise.all(Array.from({ length: workers }, () => worker()))
 
         return {
             requested: ids.length,
@@ -236,6 +247,9 @@ export class ProzorroService {
     }
 
     parseTenderData(apiData: Record<string, any>): Prisma.TenderCreateInput {
+        // PostgreSQL jsonb rejects \u0000; a handful of tenders carry NUL bytes
+        // in document descriptions. Strip them before storing.
+        apiData = this.stripNullBytes(apiData)
         const cpvCodes = this.extractCpvCodes(apiData)
 
         const publishedAt = this.resolvePublishedDate(apiData)
@@ -248,7 +262,7 @@ export class ProzorroService {
             description: apiData.description ?? null,
             procuringEntity: apiData.procuringEntity?.name ?? null,
             cpvCodes,
-            valueAmount: apiData.value?.amount ?? null,
+            valueAmount: this.toNumberOrNull(apiData.value?.amount),
             valueCurrency: apiData.value?.currency ?? null,
             status: apiData.status ?? null,
             datePublished: publishedAt,
@@ -290,6 +304,22 @@ export class ProzorroService {
         }
 
         return response.json()
+    }
+
+    private stripNullBytes<T>(value: T): T {
+        const json = JSON.stringify(value)
+        if (!json || !json.includes('\\u0000')) {
+            return value
+        }
+        return JSON.parse(json.replace(/\\u0000/g, '')) as T
+    }
+
+    private toNumberOrNull(value: unknown): number | null {
+        if (value === null || value === undefined || value === '') {
+            return null
+        }
+        const parsed = typeof value === 'number' ? value : Number(value)
+        return Number.isFinite(parsed) ? parsed : null
     }
 
     private extractCpvCodes(apiData: Record<string, any>): string[] {
