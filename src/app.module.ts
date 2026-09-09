@@ -10,6 +10,7 @@ import { NlpModule } from './nlp/nlp.module'
 import { OsintModule } from './osint/osint.module'
 import { PrismaModule } from './prisma/prisma.module'
 import { ProzorroModule } from './prozorro/prozorro.module'
+import { RiskModule } from './risk/risk.module'
 import { SearchModule } from './search/search.module'
 import { StatsModule } from './stats/stats.module'
 import { TendersModule } from './tenders/tenders.module'
@@ -27,6 +28,7 @@ import { TendersModule } from './tenders/tenders.module'
         StatsModule,
         TendersModule,
         OsintModule,
+        RiskModule,
     ],
     controllers: [AppController],
     providers: [AppService],

@@ -241,3 +241,31 @@ model TenderSample {
   @@index([sampleGroup])
   @@index([year, procurementMethodType])
 }
+
+/// Per-company bid-rigging risk score produced by evaluation/ml/score_companies.py
+/// (GraphSAGE over the co-bidding graph, trained on AMCU seeds vs full-history controls).
+model CompanyRisk {
+  id             Int      @id @default(autoincrement())
+  edrpou         String   @unique
+  name           String?
+  score          Float               // 0..1 probability-like risk
+  rank           Int                 // 1 = highest risk
+  percentile     Float               // 0..100, share of companies with lower score
+  label          Boolean  @default(false)   // in AMCU register
+  firstDecision  DateTime?
+  group          String              // amcu | control | other
+  coverage       String              // full | capped | partial
+  nTenders       Int      @default(0)
+  nWon           Int      @default(0)
+  winRate        Float    @default(0)
+  degree         Int      @default(0)
+  features       Json                // raw feature values used by the model
+  contributions  Json                // [{feature, value, contribution}] from the linear explainer
+  topNeighbors   Json                // [{edrpou, name, weight, score, label}]
+  modelVersion   String
+  computedAt     DateTime @default(now())
+
+  @@index([score])
+  @@index([rank])
+  @@index([group, coverage])
+}
