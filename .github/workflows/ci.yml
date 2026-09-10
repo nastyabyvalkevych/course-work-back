@@ -15,3 +15,4 @@ jobs:
       - run: npx prisma generate
       - run: npx tsc -p tsconfig.build.json --noEmit
       - run: npx jest --ci --coverage --coverageReporters=text-summary
+      - run: npm run test:e2e   # starts postgres:16 via docker, runs migrations, real API calls
