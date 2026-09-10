@@ -219,6 +219,7 @@ model Participation {
   @@index([tenderId])
   @@index([prozorroTenderId])
   @@index([edrpou, datePublished])
+  @@index([tenderId, role, edrpou])   // co-bidder / winner joins in the risk API
 }
 
 /// Membership of a tender in the thesis dataset: positive (has a sanctioned

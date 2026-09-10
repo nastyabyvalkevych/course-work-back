@@ -129,6 +129,11 @@ export class RiskService {
 
     /** Full company card: score, explanation, register decisions, co-bidders. */
     async company(edrpou: string) {
+        const cacheKey = `risk:company:${edrpou}`
+        const cached = await this.redisService.get(cacheKey)
+        if (cached) {
+            return cached
+        }
         const risk = await this.prisma.companyRisk.findUnique({ where: { edrpou } })
         if (!risk) {
             throw new NotFoundException(
@@ -150,11 +155,18 @@ export class RiskService {
             this.coBidders(edrpou, 25),
             this.recentTenders(edrpou, 15),
         ])
-        return { ...risk, decisions, coBidders, recentTenders: recent }
+        const response = { ...risk, decisions, coBidders, recentTenders: recent }
+        await this.redisService.set(cacheKey, response, 3600)
+        return response
     }
 
     /** Ego network (depth 1) for the graph view. */
     async graph(edrpou: string, limit = 40) {
+        const cacheKey = `risk:graph:${edrpou}:${limit}`
+        const cached = await this.redisService.get(cacheKey)
+        if (cached) {
+            return cached
+        }
         const center = await this.prisma.companyRisk.findUnique({ where: { edrpou } })
         if (!center) {
             throw new NotFoundException(`Company ${edrpou} not found`)
@@ -191,7 +203,9 @@ export class RiskService {
                 center: false,
             })),
         ]
-        return { nodes, edges: inner.map((e) => ({ source: e.a, target: e.b, weight: e.weight })) }
+        const response = { nodes, edges: inner.map((e) => ({ source: e.a, target: e.b, weight: e.weight })) }
+        await this.redisService.set(cacheKey, response, 3600)
+        return response
     }
 
     /** Tender card: participants with risk and their pairwise co-bidding history. */
@@ -316,18 +330,33 @@ export class RiskService {
             WITH mine AS (
                 SELECT DISTINCT "tenderId" FROM "Participation" WHERE edrpou = ${edrpou} AND role = 'bidder'
             ),
-            partners AS (
-                SELECT p.edrpou, MIN(p.name) AS name, COUNT(DISTINCT p."tenderId")::int AS shared,
-                       COUNT(DISTINCT CASE WHEN w.edrpou IS NOT NULL THEN p."tenderId" END)::int AS they_won,
-                       COUNT(DISTINCT CASE WHEN me.edrpou IS NOT NULL THEN p."tenderId" END)::int AS we_won
-                FROM "Participation" p
-                JOIN mine ON mine."tenderId" = p."tenderId"
-                LEFT JOIN "Participation" w ON w."tenderId" = p."tenderId" AND w.role = 'winner' AND w.edrpou = p.edrpou
-                LEFT JOIN "Participation" me ON me."tenderId" = p."tenderId" AND me.role = 'winner' AND me.edrpou = ${edrpou}
+            bids AS (                       -- one row per (tender, partner), no lot duplicates
+                SELECT DISTINCT p."tenderId", p.edrpou
+                FROM "Participation" p JOIN mine ON mine."tenderId" = p."tenderId"
                 WHERE p.role = 'bidder' AND p.edrpou <> ${edrpou}
-                GROUP BY p.edrpou
+            ),
+            wins AS (                       -- winners in my tenders (partners and me)
+                SELECT DISTINCT w."tenderId", w.edrpou
+                FROM "Participation" w JOIN mine ON mine."tenderId" = w."tenderId"
+                WHERE w.role = 'winner'
+            ),
+            top AS (
+                SELECT b.edrpou,
+                       COUNT(*)::int AS shared,
+                       COUNT(wp."tenderId")::int AS they_won,
+                       COUNT(wm."tenderId")::int AS we_won
+                FROM bids b
+                LEFT JOIN wins wp ON wp."tenderId" = b."tenderId" AND wp.edrpou = b.edrpou
+                LEFT JOIN wins wm ON wm."tenderId" = b."tenderId" AND wm.edrpou = ${edrpou}
+                GROUP BY b.edrpou
+                ORDER BY shared DESC
+                LIMIT ${limit}
             )
-            SELECT * FROM partners ORDER BY shared DESC LIMIT ${limit}
+            SELECT t.edrpou,
+                   COALESCE(c.name, (SELECT MIN(p.name) FROM "Participation" p WHERE p.edrpou = t.edrpou)) AS name,
+                   t.shared, t.they_won, t.we_won
+            FROM top t LEFT JOIN "CompanyRisk" c ON c.edrpou = t.edrpou
+            ORDER BY t.shared DESC
         `)
         const risks = await this.prisma.companyRisk.findMany({
             where: { edrpou: { in: rows.map((r) => r.edrpou) } },
@@ -359,15 +388,28 @@ export class RiskService {
                 won: boolean
             }>
         >(Prisma.sql`
-            SELECT t.id, t."rawData"->>'tenderID' AS "tenderID", t.title, t."procuringEntity",
-                   t."datePublished", t."valueAmount",
-                   (SELECT COUNT(DISTINCT b.edrpou) FROM "Participation" b WHERE b."tenderId" = t.id AND b.role='bidder')::int AS bidders,
-                   EXISTS (SELECT 1 FROM "Participation" w WHERE w."tenderId" = t.id AND w.role='winner' AND w.edrpou = ${edrpou}) AS won
-            FROM "Participation" p JOIN "Tender" t ON t.id = p."tenderId"
-            WHERE p.edrpou = ${edrpou} AND p.role = 'bidder'
-            GROUP BY t.id
-            ORDER BY t."datePublished" DESC NULLS LAST
-            LIMIT ${limit}
+            WITH mine AS (
+                SELECT DISTINCT p."tenderId" FROM "Participation" p WHERE p.edrpou = ${edrpou} AND p.role = 'bidder'
+            ),
+            recent AS (
+                SELECT t.id, t."rawData"->>'tenderID' AS "tenderID", t.title, t."procuringEntity",
+                       t."datePublished", t."valueAmount"
+                FROM "Tender" t JOIN mine ON mine."tenderId" = t.id
+                ORDER BY t."datePublished" DESC NULLS LAST
+                LIMIT ${limit}
+            ),
+            cnt AS (
+                SELECT b."tenderId", COUNT(DISTINCT b.edrpou)::int AS bidders
+                FROM "Participation" b JOIN recent r ON r.id = b."tenderId" WHERE b.role = 'bidder'
+                GROUP BY b."tenderId"
+            ),
+            won AS (
+                SELECT DISTINCT w."tenderId" FROM "Participation" w JOIN recent r ON r.id = w."tenderId"
+                WHERE w.role = 'winner' AND w.edrpou = ${edrpou}
+            )
+            SELECT r.*, COALESCE(c.bidders, 0) AS bidders, (won."tenderId" IS NOT NULL) AS won
+            FROM recent r LEFT JOIN cnt c ON c."tenderId" = r.id LEFT JOIN won ON won."tenderId" = r.id
+            ORDER BY r."datePublished" DESC NULLS LAST
         `)
     }
 }
