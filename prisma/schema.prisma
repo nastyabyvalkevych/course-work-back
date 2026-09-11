@@ -214,6 +214,7 @@ model Participation {
   bidStatus        String?
   isWinner         Boolean   @default(false)
   datePublished    DateTime?
+  region           String?   // область реєстрації учасника з картки в Prozorro
 
   @@index([edrpou])
   @@index([tenderId])
@@ -260,6 +261,7 @@ model CompanyRisk {
   nWon           Int      @default(0)
   winRate        Float    @default(0)
   degree         Int      @default(0)
+  region         String?             // найчастіша область реєстрації за картками учасника
   features       Json                // raw feature values used by the model
   contributions  Json                // [{feature, value, contribution}] from the linear explainer
   topNeighbors   Json                // [{edrpou, name, weight, score, label}]
@@ -269,4 +271,5 @@ model CompanyRisk {
   @@index([score])
   @@index([rank])
   @@index([group, coverage])
+  @@index([region])
 }

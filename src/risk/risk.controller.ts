@@ -5,7 +5,8 @@ import { RiskService } from './risk.service'
 /**
  * Bid-rigging risk API (read-only, public).
  *   GET /api/risk/summary
- *   GET /api/risk/ranking?limit&offset&minTenders&excludeKnown&fullCoverageOnly&q
+ *   GET /api/risk/ranking?limit&offset&minTenders&excludeKnown&fullCoverageOnly&q&region
+ *   GET /api/risk/regions?minTenders        (per-oblast aggregates for the map)
  *   GET /api/risk/company/:edrpou
  *   GET /api/risk/company/:edrpou/graph?limit
  *   GET /api/risk/tender/:id        (numeric id, hex prozorroId or UA-YYYY-... tenderID)
@@ -27,6 +28,7 @@ export class RiskController {
         @Query('excludeKnown') excludeKnown?: string,
         @Query('fullCoverageOnly') fullCoverageOnly?: string,
         @Query('q') q?: string,
+        @Query('region') region?: string,
     ) {
         return this.riskService.ranking({
             limit: limit ? Number(limit) : undefined,
@@ -35,7 +37,13 @@ export class RiskController {
             excludeKnown: excludeKnown === '1' || excludeKnown === 'true',
             fullCoverageOnly: fullCoverageOnly === '1' || fullCoverageOnly === 'true',
             q,
+            region,
         })
+    }
+
+    @Get('regions')
+    regions(@Query('minTenders') minTenders?: string) {
+        return this.riskService.regions(minTenders ? Number(minTenders) : undefined)
     }
 
     @Get('company/:edrpou')

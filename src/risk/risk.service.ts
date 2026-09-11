@@ -81,6 +81,7 @@ export class RiskService {
         excludeKnown?: boolean
         fullCoverageOnly?: boolean
         q?: string
+        region?: string
     }) {
         const limit = Math.min(Math.max(params.limit ?? 50, 1), 200)
         const offset = Math.max(params.offset ?? 0, 0)
@@ -92,6 +93,9 @@ export class RiskService {
         }
         if (params.fullCoverageOnly) {
             where.coverage = 'full'
+        }
+        if (params.region && params.region.trim()) {
+            where.region = params.region.trim()
         }
         if (params.q && params.q.trim()) {
             const q = params.q.trim()
@@ -120,11 +124,63 @@ export class RiskService {
                     nWon: true,
                     winRate: true,
                     degree: true,
+                    region: true,
                 },
             }),
             this.prisma.companyRisk.count({ where }),
         ])
         return { total, limit, offset, items }
+    }
+
+    /** Per-oblast aggregates for the map: companies, sanctioned, high-risk share, mean risk, tenders. */
+    async regions(minTenders = 5) {
+        const cacheKey = `risk:regions:${minTenders}`
+        const cached = await this.redisService.get(cacheKey)
+        if (cached) {
+            return cached
+        }
+        const rows = await this.prisma.$queryRaw<
+            Array<{
+                region: string
+                companies: number
+                sanctioned: number
+                high_risk: number
+                mean_score: number
+                median_score: number
+                tenders_as_bidder: number
+            }>
+        >(Prisma.sql`
+            WITH c AS (
+                SELECT region, score, label, "nTenders" FROM "CompanyRisk"
+                WHERE region IS NOT NULL AND "nTenders" >= ${minTenders}
+            )
+            SELECT region,
+                   COUNT(*)::int AS companies,
+                   COUNT(*) FILTER (WHERE label)::int AS sanctioned,
+                   COUNT(*) FILTER (WHERE score >= 0.7)::int AS high_risk,
+                   AVG(score)::float AS mean_score,
+                   PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY score)::float AS median_score,
+                   SUM("nTenders")::int AS tenders_as_bidder
+            FROM c GROUP BY region ORDER BY companies DESC
+        `)
+        const total = rows.reduce((a, r) => a + r.companies, 0)
+        const response = {
+            minTenders,
+            totalCompanies: total,
+            regions: rows.map((r) => ({
+                region: r.region,
+                companies: r.companies,
+                sanctioned: r.sanctioned,
+                sanctionedShare: r.companies ? r.sanctioned / r.companies : 0,
+                highRisk: r.high_risk,
+                highRiskShare: r.companies ? r.high_risk / r.companies : 0,
+                meanScore: r.mean_score,
+                medianScore: r.median_score,
+                tendersAsBidder: r.tenders_as_bidder,
+            })),
+        }
+        await this.redisService.set(cacheKey, response, 3600)
+        return response
     }
 
     /** Full company card: score, explanation, register decisions, co-bidders. */
