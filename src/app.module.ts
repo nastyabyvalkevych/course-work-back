@@ -10,6 +10,7 @@ import { NlpModule } from './nlp/nlp.module'
 import { OsintModule } from './osint/osint.module'
 import { PrismaModule } from './prisma/prisma.module'
 import { ProzorroModule } from './prozorro/prozorro.module'
+import { ReliabilityModule } from './reliability/reliability.module'
 import { RiskModule } from './risk/risk.module'
 import { SearchModule } from './search/search.module'
 import { StatsModule } from './stats/stats.module'
@@ -29,6 +30,7 @@ import { TendersModule } from './tenders/tenders.module'
         TendersModule,
         OsintModule,
         RiskModule,
+        ReliabilityModule,
     ],
     controllers: [AppController],
     providers: [AppService],
