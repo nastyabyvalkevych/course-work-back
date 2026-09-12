@@ -379,6 +379,101 @@ export class RiskService {
 
     // ------------------------------------------------------------------ helpers --
 
+    /** Available backtest cutoffs with headline metrics on the fair population. */
+    async backtests() {
+        const cacheKey = 'risk:backtests'
+        const cached = await this.redisService.get(cacheKey)
+        if (cached) return cached
+        const years = await this.prisma.riskBacktest.groupBy({
+            by: ['cutoffYear', 'modelVersion'],
+            _count: { _all: true },
+            orderBy: { cutoffYear: 'asc' },
+        })
+        const items: Record<string, unknown>[] = []
+        for (const y of years) {
+            const m = await this.backtestMetrics(y.cutoffYear, true, [50, 100, 200, 500])
+            items.push({ cutoffYear: y.cutoffYear, modelVersion: y.modelVersion, companies: y._count._all, ...m })
+        }
+        const result = { items }
+        await this.redisService.set(cacheKey, result, 3600)
+        return result
+    }
+
+    /**
+     * Retrospective view for one cutoff: top-ranked companies as of 31.12.cutoffYear with
+     * what happened next, precision@k curve against the base rate, and where the companies
+     * AMCU sanctioned later stood in the ranking.
+     */
+    async backtest(cutoffYear: number, params: { limit?: number; fullCoverageOnly?: boolean }) {
+        const limit = Math.min(Math.max(params.limit ?? 100, 1), 500)
+        const fullOnly = params.fullCoverageOnly ?? true
+        const cacheKey = `risk:backtest:${cutoffYear}:${limit}:${fullOnly ? 1 : 0}`
+        const cached = await this.redisService.get(cacheKey)
+        if (cached) return cached
+        const exists = await this.prisma.riskBacktest.count({ where: { cutoffYear } })
+        if (!exists) throw new NotFoundException(`No backtest for cutoff ${cutoffYear}`)
+        const where: Prisma.RiskBacktestWhereInput = { cutoffYear, knownAtCutoff: false }
+        if (fullOnly) where.coverage = 'full'
+        const select = {
+            edrpou: true, name: true, score: true, rank: true, rankFull: true, group: true, coverage: true,
+            nTenders: true, degree: true, firstDecision: true, outcome: true,
+        } as const
+        const orderBy = fullOnly ? { rankFull: 'asc' as const } : { rank: 'asc' as const }
+        const [top, caught, metrics] = await Promise.all([
+            this.prisma.riskBacktest.findMany({ where, orderBy, take: limit, select }),
+            this.prisma.riskBacktest.findMany({ where: { ...where, outcome: 'caught' }, orderBy, select }),
+            this.backtestMetrics(cutoffYear, fullOnly, [10, 20, 50, 100, 200, 300, 500, 1000]),
+        ])
+        const population = metrics.population
+        const caughtRows = caught.map((c) => {
+            const r = fullOnly ? (c.rankFull ?? c.rank) : c.rank
+            return { ...c, rankUsed: r, percentile: population ? 100 * (1 - (r - 1) / population) : null }
+        })
+        const result = {
+            cutoffYear,
+            fullCoverageOnly: fullOnly,
+            ...metrics,
+            top: top.map((t) => ({ ...t, rankUsed: fullOnly ? (t.rankFull ?? t.rank) : t.rank })),
+            caughtLater: caughtRows,
+        }
+        await this.redisService.set(cacheKey, result, 3600)
+        return result
+    }
+
+    /** precision@k, recall@k, base rate and lift on companies unknown at the cutoff. */
+    private async backtestMetrics(cutoffYear: number, fullOnly: boolean, ks: number[]) {
+        const covFilter = fullOnly ? Prisma.sql`AND coverage = 'full'` : Prisma.empty
+        const rankCol = fullOnly ? Prisma.sql`"rankFull"` : Prisma.sql`rank`
+        const rows = await this.prisma.$queryRaw<{ r: number; caught: boolean }[]>(Prisma.sql`
+            SELECT ${rankCol} AS r, (outcome = 'caught') AS caught
+              FROM "RiskBacktest"
+             WHERE "cutoffYear" = ${cutoffYear} AND "knownAtCutoff" = false ${covFilter}
+             ORDER BY ${rankCol} ASC`)
+        const population = rows.length
+        const totalCaught = rows.filter((x) => x.caught).length
+        const baseRate = population ? totalCaught / population : 0
+        let hits = 0
+        const curve: { k: number; precision: number; recall: number; lift: number }[] = []
+        const wanted = new Set(ks.filter((k) => k <= population))
+        rows.forEach((x, i) => {
+            if (x.caught) hits++
+            const k = i + 1
+            if (wanted.has(k)) {
+                curve.push({ k, precision: hits / k, recall: totalCaught ? hits / totalCaught : 0, lift: baseRate ? hits / k / baseRate : 0 })
+            }
+        })
+        // share of later-sanctioned companies that the model placed in the top 10 %
+        const top10 = Math.ceil(population * 0.1)
+        const caughtInTop10 = rows.slice(0, top10).filter((x) => x.caught).length
+        return {
+            population,
+            totalCaught,
+            baseRate,
+            curve,
+            recallTop10Pct: totalCaught ? caughtInTop10 / totalCaught : 0,
+        }
+    }
+
     private async coBidders(edrpou: string, limit: number): Promise<CoBidder[]> {
         const rows = await this.prisma.$queryRaw<
             Array<{ edrpou: string; name: string | null; shared: number; they_won: number; we_won: number }>

@@ -7,6 +7,8 @@ import { RiskService } from './risk.service'
  *   GET /api/risk/summary
  *   GET /api/risk/ranking?limit&offset&minTenders&excludeKnown&fullCoverageOnly&q&region
  *   GET /api/risk/regions?minTenders        (per-oblast aggregates for the map)
+ *   GET /api/risk/backtest                  (retrospective cutoffs)
+ *   GET /api/risk/backtest/:year?limit&fullCoverageOnly
  *   GET /api/risk/company/:edrpou
  *   GET /api/risk/company/:edrpou/graph?limit
  *   GET /api/risk/tender/:id        (numeric id, hex prozorroId or UA-YYYY-... tenderID)
@@ -44,6 +46,19 @@ export class RiskController {
     @Get('regions')
     regions(@Query('minTenders') minTenders?: string) {
         return this.riskService.regions(minTenders ? Number(minTenders) : undefined)
+    }
+
+    @Get('backtest')
+    backtests() {
+        return this.riskService.backtests()
+    }
+
+    @Get('backtest/:year')
+    backtest(@Param('year') year: string, @Query('limit') limit?: string, @Query('fullCoverageOnly') fullCoverageOnly?: string) {
+        return this.riskService.backtest(Number(year), {
+            limit: limit ? Number(limit) : undefined,
+            fullCoverageOnly: fullCoverageOnly === undefined ? true : fullCoverageOnly === '1' || fullCoverageOnly === 'true',
+        })
     }
 
     @Get('company/:edrpou')

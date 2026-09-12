@@ -273,3 +273,32 @@ model CompanyRisk {
   @@index([group, coverage])
   @@index([region])
 }
+
+/// Retrospective check ("what would the system have said on 31 December of the
+/// cutoff year"): GraphSAGE trained on the graph snapshot up to the cutoff with
+/// the AMCU decisions known by then, scores for every company in the snapshot,
+/// and the outcome taken from the current register. Written by
+/// evaluation/ml/backtest_snapshots.py.
+model RiskBacktest {
+  id            Int       @id @default(autoincrement())
+  cutoffYear    Int                 // snapshot = tenders up to 31.12.cutoffYear
+  edrpou        String
+  name          String?
+  score         Float               // raw GraphSAGE probability at the cutoff
+  rank          Int                 // 1 = highest risk among all companies in the snapshot
+  rankFull      Int?                // rank among full-coverage companies only (fair population)
+  group         String              // amcu | control | other
+  coverage      String              // full | capped | partial
+  nTenders      Int       @default(0)
+  degree        Int       @default(0)
+  knownAtCutoff Boolean   @default(false)   // first AMCU decision <= cutoff (used as training label)
+  firstDecision DateTime?           // from the current register
+  outcome       String              // known | caught | none  (caught = first decision after the cutoff)
+  modelVersion  String
+  computedAt    DateTime  @default(now())
+
+  @@unique([cutoffYear, edrpou])
+  @@index([cutoffYear, rank])
+  @@index([cutoffYear, coverage, rankFull])
+  @@index([cutoffYear, outcome])
+}
