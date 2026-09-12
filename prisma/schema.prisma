@@ -281,7 +281,8 @@ model CompanyRisk {
 /// evaluation/ml/backtest_snapshots.py.
 model RiskBacktest {
   id            Int       @id @default(autoincrement())
-  cutoffYear    Int                 // snapshot = tenders up to 31.12.cutoffYear
+  cutoffYear    Int                 // snapshot = tenders up to 31.12.cutoffYear (or cutoffDate)
+  cutoffDate    DateTime?           // exact cutoff when it is not the end of the year (forward forecast)
   edrpou        String
   name          String?
   score         Float               // raw GraphSAGE probability at the cutoff

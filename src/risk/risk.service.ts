@@ -385,7 +385,7 @@ export class RiskService {
         const cached = await this.redisService.get(cacheKey)
         if (cached) return cached
         const years = await this.prisma.riskBacktest.groupBy({
-            by: ['cutoffYear', 'modelVersion'],
+            by: ['cutoffYear', 'cutoffDate', 'modelVersion'],
             _count: { _all: true },
             orderBy: { cutoffYear: 'asc' },
         })
@@ -394,7 +394,7 @@ export class RiskService {
             const m = await this.backtestMetrics(y.cutoffYear, true, [50, 100, 200, 500])
             const { positions: _p, ...pub } = m
             void _p
-            items.push({ cutoffYear: y.cutoffYear, modelVersion: y.modelVersion, companies: y._count._all, ...pub })
+            items.push({ cutoffYear: y.cutoffYear, cutoffDate: y.cutoffDate, modelVersion: y.modelVersion, companies: y._count._all, ...pub })
         }
         const result = { items }
         await this.redisService.set(cacheKey, result, 3600)
@@ -412,8 +412,8 @@ export class RiskService {
         const cacheKey = `risk:backtest:${cutoffYear}:${limit}:${fullOnly ? 1 : 0}`
         const cached = await this.redisService.get(cacheKey)
         if (cached) return cached
-        const exists = await this.prisma.riskBacktest.count({ where: { cutoffYear } })
-        if (!exists) throw new NotFoundException(`No backtest for cutoff ${cutoffYear}`)
+        const any = await this.prisma.riskBacktest.findFirst({ where: { cutoffYear }, select: { cutoffDate: true, modelVersion: true, computedAt: true } })
+        if (!any) throw new NotFoundException(`No backtest for cutoff ${cutoffYear}`)
         const where: Prisma.RiskBacktestWhereInput = { cutoffYear, knownAtCutoff: false }
         if (fullOnly) where.coverage = 'full'
         const select = {
@@ -437,6 +437,9 @@ export class RiskService {
         void _positions
         const result = {
             cutoffYear,
+            cutoffDate: any.cutoffDate,
+            modelVersion: any.modelVersion,
+            computedAt: any.computedAt,
             fullCoverageOnly: fullOnly,
             ...publicMetrics,
             top: top.map((t) => ({ ...t, rankUsed: pos.get(t.edrpou) ?? (fullOnly ? (t.rankFull ?? t.rank) : t.rank) })),
