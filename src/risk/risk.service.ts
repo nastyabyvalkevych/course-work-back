@@ -392,7 +392,9 @@ export class RiskService {
         const items: Record<string, unknown>[] = []
         for (const y of years) {
             const m = await this.backtestMetrics(y.cutoffYear, true, [50, 100, 200, 500])
-            items.push({ cutoffYear: y.cutoffYear, modelVersion: y.modelVersion, companies: y._count._all, ...m })
+            const { positions: _p, ...pub } = m
+            void _p
+            items.push({ cutoffYear: y.cutoffYear, modelVersion: y.modelVersion, companies: y._count._all, ...pub })
         }
         const result = { items }
         await this.redisService.set(cacheKey, result, 3600)
@@ -425,15 +427,19 @@ export class RiskService {
             this.backtestMetrics(cutoffYear, fullOnly, [10, 20, 50, 100, 200, 300, 500, 1000]),
         ])
         const population = metrics.population
+        // rank among companies unknown at the cutoff (the list a user would actually have seen)
+        const pos = metrics.positions
         const caughtRows = caught.map((c) => {
-            const r = fullOnly ? (c.rankFull ?? c.rank) : c.rank
+            const r = pos.get(c.edrpou) ?? (fullOnly ? (c.rankFull ?? c.rank) : c.rank)
             return { ...c, rankUsed: r, percentile: population ? 100 * (1 - (r - 1) / population) : null }
         })
+        const { positions: _positions, ...publicMetrics } = metrics
+        void _positions
         const result = {
             cutoffYear,
             fullCoverageOnly: fullOnly,
-            ...metrics,
-            top: top.map((t) => ({ ...t, rankUsed: fullOnly ? (t.rankFull ?? t.rank) : t.rank })),
+            ...publicMetrics,
+            top: top.map((t) => ({ ...t, rankUsed: pos.get(t.edrpou) ?? (fullOnly ? (t.rankFull ?? t.rank) : t.rank) })),
             caughtLater: caughtRows,
         }
         await this.redisService.set(cacheKey, result, 3600)
@@ -444,8 +450,8 @@ export class RiskService {
     private async backtestMetrics(cutoffYear: number, fullOnly: boolean, ks: number[]) {
         const covFilter = fullOnly ? Prisma.sql`AND coverage = 'full'` : Prisma.empty
         const rankCol = fullOnly ? Prisma.sql`"rankFull"` : Prisma.sql`rank`
-        const rows = await this.prisma.$queryRaw<{ r: number; caught: boolean }[]>(Prisma.sql`
-            SELECT ${rankCol} AS r, (outcome = 'caught') AS caught
+        const rows = await this.prisma.$queryRaw<{ edrpou: string; r: number; caught: boolean }[]>(Prisma.sql`
+            SELECT edrpou, ${rankCol} AS r, (outcome = 'caught') AS caught
               FROM "RiskBacktest"
              WHERE "cutoffYear" = ${cutoffYear} AND "knownAtCutoff" = false ${covFilter}
              ORDER BY ${rankCol} ASC`)
@@ -455,7 +461,9 @@ export class RiskService {
         let hits = 0
         const curve: { k: number; precision: number; recall: number; lift: number }[] = []
         const wanted = new Set(ks.filter((k) => k <= population))
+        const positions = new Map<string, number>()
         rows.forEach((x, i) => {
+            positions.set(x.edrpou, i + 1)
             if (x.caught) hits++
             const k = i + 1
             if (wanted.has(k)) {
@@ -471,6 +479,7 @@ export class RiskService {
             baseRate,
             curve,
             recallTop10Pct: totalCaught ? caughtInTop10 / totalCaught : 0,
+            positions,
         }
     }
 
