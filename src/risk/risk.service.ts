@@ -456,7 +456,7 @@ export class RiskService {
     /** How earlier snapshots ranked this company (RiskBacktest), for the company card. */
     async companyHistory(edrpou: string) {
         const rows = await this.prisma.riskBacktest.findMany({ where: { edrpou }, orderBy: { cutoffYear: 'asc' },
-            select: { cutoffYear: true, cutoffDate: true, score: true, rankFull: true, rank: true, nTenders: true, coverage: true, knownAtCutoff: true, outcome: true } })
+            select: { cutoffYear: true, cutoffDate: true, score: true, rankFull: true, rank: true, nTenders: true, coverage: true, knownAtCutoff: true, outcome: true, firstDecision: true } })
         if (!rows.length) return []
         const pops = await this.prisma.riskBacktest.groupBy({ by: ['cutoffYear'], where: { knownAtCutoff: false, coverage: 'full', nTenders: { gte: 5 } }, _count: { _all: true } })
         const popBy = new Map(pops.map((p) => [p.cutoffYear, p._count._all]))
