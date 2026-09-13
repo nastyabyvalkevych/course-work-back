@@ -20,12 +20,18 @@ model Tender {
   datePublished   DateTime?
   dateModified    DateTime?
   documentLength  Int            @default(0)
+  buyerEdrpou     String?        // procuringEntity.identifier.id
+  buyerRegion     String?        // normalised oblast of the buyer
+  cpvDivision     String?        // first two digits of items[0].classification.id (ДК021 division)
   rawData         Json
   createdAt       DateTime       @default(now())
   updatedAt       DateTime       @updatedAt
   tenderIndexes   TenderIndex[]
   participations  Participation[]
   sample          TenderSample?
+
+  @@index([buyerEdrpou])
+  @@index([cpvDivision])
 }
 
 model TenderIndex {
@@ -302,4 +308,58 @@ model RiskBacktest {
   @@index([cutoffYear, rank])
   @@index([cutoffYear, coverage, rankFull])
   @@index([cutoffYear, outcome])
+}
+
+/// Two companies that share a contact value in their Prozorro bidder cards
+/// (phone / e-mail / contact person / street address). Loaded from
+/// evaluation/mining/shared_contacts.py output by evaluation/load_links_groups.py.
+model CompanyLink {
+  id       Int    @id @default(autoincrement())
+  edrpouA  String
+  edrpouB  String
+  kinds    String[]   // phone | email | person | address
+
+  @@unique([edrpouA, edrpouB])
+  @@index([edrpouA])
+  @@index([edrpouB])
+}
+
+/// Tight co-bidding group: connected component of pairs with high exclusivity
+/// and >= 3 shared tenders, size 2..15. Built by evaluation/load_links_groups.py.
+model TightGroup {
+  id             Int      @id
+  size           Int
+  sharedTenders  Int                 // distinct tenders where >= 2 members met
+  totalTenders   Int                 // distinct tenders with any member bidding
+  wonAmount      Float               // sum of winning bid amounts of members, UAH
+  sanctioned     Int                 // members in the AMCU register
+  sameDecision   Int                 // member pairs named in one AMCU decision
+  meanScore      Float
+  maxScore       Float
+  regions        String[]
+  topCpv         String[]            // CPV divisions where the group bids most
+  firstShared    DateTime?
+  lastShared     DateTime?
+  computedAt     DateTime @default(now())
+  members        TightGroupMember[]
+
+  @@index([maxScore])
+  @@index([wonAmount])
+  @@index([sanctioned])
+}
+
+model TightGroupMember {
+  id        Int        @id @default(autoincrement())
+  groupId   Int
+  group     TightGroup @relation(fields: [groupId], references: [id], onDelete: Cascade)
+  edrpou    String
+  name      String?
+  score     Float?
+  label     Boolean    @default(false)
+  nTenders  Int        @default(0)
+  nWon      Int        @default(0)
+  wonAmount Float      @default(0)
+
+  @@unique([groupId, edrpou])
+  @@index([edrpou])
 }
