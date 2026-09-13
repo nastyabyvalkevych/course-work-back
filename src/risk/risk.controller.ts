@@ -54,11 +54,17 @@ export class RiskController {
     }
 
     @Get('backtest/:year')
-    backtest(@Param('year') year: string, @Query('limit') limit?: string, @Query('fullCoverageOnly') fullCoverageOnly?: string) {
+    backtest(@Param('year') year: string, @Query('limit') limit?: string, @Query('fullCoverageOnly') fullCoverageOnly?: string, @Query('minTenders') minTenders?: string) {
         return this.riskService.backtest(Number(year), {
             limit: limit ? Number(limit) : undefined,
             fullCoverageOnly: fullCoverageOnly === undefined ? true : fullCoverageOnly === '1' || fullCoverageOnly === 'true',
+            minTenders: minTenders === undefined ? undefined : Number(minTenders),
         })
+    }
+
+    @Get('company/:edrpou/history')
+    history(@Param('edrpou') edrpou: string) {
+        return this.riskService.companyHistory(edrpou.trim())
     }
 
     @Get('company/:edrpou')

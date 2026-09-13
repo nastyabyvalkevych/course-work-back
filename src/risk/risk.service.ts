@@ -408,15 +408,16 @@ export class RiskService {
      * what happened next, precision@k curve against the base rate, and where the companies
      * AMCU sanctioned later stood in the ranking.
      */
-    async backtest(cutoffYear: number, params: { limit?: number; fullCoverageOnly?: boolean }) {
+    async backtest(cutoffYear: number, params: { limit?: number; fullCoverageOnly?: boolean; minTenders?: number }) {
         const limit = Math.min(Math.max(params.limit ?? 100, 1), 500)
         const fullOnly = params.fullCoverageOnly ?? true
-        const cacheKey = `risk:backtest:${cutoffYear}:${limit}:${fullOnly ? 1 : 0}`
+        const minTenders = Math.max(params.minTenders ?? 5, 0)
+        const cacheKey = `risk:backtest:${cutoffYear}:${limit}:${fullOnly ? 1 : 0}:${minTenders}`
         const cached = await this.redisService.get(cacheKey)
         if (cached) return cached
         const any = await this.prisma.riskBacktest.findFirst({ where: { cutoffYear }, select: { cutoffDate: true, modelVersion: true, computedAt: true } })
         if (!any) throw new NotFoundException(`No backtest for cutoff ${cutoffYear}`)
-        const where: Prisma.RiskBacktestWhereInput = { cutoffYear, knownAtCutoff: false }
+        const where: Prisma.RiskBacktestWhereInput = { cutoffYear, knownAtCutoff: false, nTenders: { gte: minTenders } }
         if (fullOnly) where.coverage = 'full'
         const select = {
             edrpou: true, name: true, score: true, rank: true, rankFull: true, group: true, coverage: true,
@@ -426,7 +427,7 @@ export class RiskService {
         const [top, caught, metrics] = await Promise.all([
             this.prisma.riskBacktest.findMany({ where, orderBy, take: limit, select }),
             this.prisma.riskBacktest.findMany({ where: { ...where, outcome: 'caught' }, orderBy, select }),
-            this.backtestMetrics(cutoffYear, fullOnly, [10, 20, 50, 100, 200, 300, 500, 1000]),
+            this.backtestMetrics(cutoffYear, fullOnly, [10, 20, 50, 100, 200, 300, 500, 1000], minTenders),
         ])
         const population = metrics.population
         // rank among companies unknown at the cutoff (the list a user would actually have seen)
@@ -443,6 +444,7 @@ export class RiskService {
             modelVersion: any.modelVersion,
             computedAt: any.computedAt,
             fullCoverageOnly: fullOnly,
+            minTenders,
             ...publicMetrics,
             top: top.map((t) => ({ ...t, rankUsed: pos.get(t.edrpou) ?? (fullOnly ? (t.rankFull ?? t.rank) : t.rank) })),
             caughtLater: caughtRows,
@@ -451,9 +453,28 @@ export class RiskService {
         return result
     }
 
+    /** How earlier snapshots ranked this company (RiskBacktest), for the company card. */
+    async companyHistory(edrpou: string) {
+        const rows = await this.prisma.riskBacktest.findMany({ where: { edrpou }, orderBy: { cutoffYear: 'asc' },
+            select: { cutoffYear: true, cutoffDate: true, score: true, rankFull: true, rank: true, nTenders: true, coverage: true, knownAtCutoff: true, outcome: true } })
+        if (!rows.length) return []
+        const pops = await this.prisma.riskBacktest.groupBy({ by: ['cutoffYear'], where: { knownAtCutoff: false, coverage: 'full', nTenders: { gte: 5 } }, _count: { _all: true } })
+        const popBy = new Map(pops.map((p) => [p.cutoffYear, p._count._all]))
+        const out: Record<string, unknown>[] = []
+        for (const r of rows) {
+            if (r.knownAtCutoff) { out.push({ ...r, position: null, population: null, note: 'уже в реєстрі на дату зрізу' }); continue }
+            const cond = Prisma.sql`"cutoffYear" = ${r.cutoffYear} AND "knownAtCutoff" = false AND coverage = 'full' AND "nTenders" >= 5`
+            const pos = r.coverage === 'full' && r.nTenders >= 5
+                ? (await this.prisma.$queryRaw<{ c: number }[]>(Prisma.sql`SELECT count(*)::int AS c FROM "RiskBacktest" WHERE ${cond} AND score > ${r.score}`))[0].c + 1
+                : null
+            out.push({ ...r, position: pos, population: popBy.get(r.cutoffYear) ?? null, note: pos === null ? 'мало історії на дату зрізу, у список не входила' : null })
+        }
+        return out
+    }
+
     /** precision@k, recall@k, base rate and lift on companies unknown at the cutoff. */
-    private async backtestMetrics(cutoffYear: number, fullOnly: boolean, ks: number[]) {
-        const covFilter = fullOnly ? Prisma.sql`AND coverage = 'full'` : Prisma.empty
+    private async backtestMetrics(cutoffYear: number, fullOnly: boolean, ks: number[], minTenders = 5) {
+        const covFilter = fullOnly ? Prisma.sql`AND coverage = 'full' AND "nTenders" >= ${minTenders}` : Prisma.sql`AND "nTenders" >= ${minTenders}`
         const rankCol = fullOnly ? Prisma.sql`"rankFull"` : Prisma.sql`rank`
         const rows = await this.prisma.$queryRaw<{ edrpou: string; r: number; caught: boolean }[]>(Prisma.sql`
             SELECT edrpou, ${rankCol} AS r, (outcome = 'caught') AS caught
