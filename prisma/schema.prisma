@@ -363,3 +363,23 @@ model TightGroupMember {
   @@unique([groupId, edrpou])
   @@index([edrpou])
 }
+
+/// Per-buyer competition indicators, precomputed by evaluation/load_links_groups.py buyer_stats.
+model BuyerStats {
+  edrpou            String   @id
+  name              String?
+  region            String?
+  tenders           Int                 // tenders with at least one bid
+  singleBidder      Int
+  twoBidder         Int
+  highRiskWins      Int                 // awards to companies with score >= 0.7
+  sanctionedWins    Int                 // awards to companies in the AMCU register
+  wonTotal          Float
+  wonHighRisk       Float               // awards to high-risk or sanctioned companies
+  repeatedPairs     Int                 // bidder pairs meeting >= 3 times at this buyer
+  computedAt        DateTime @default(now())
+
+  @@index([region])
+  @@index([tenders])
+  @@index([twoBidder])
+}

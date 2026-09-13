@@ -123,48 +123,35 @@ export class InsightsService {
         })
     }
 
-    /** Buyers with the most competition problems (for the buyers index page). */
-    async buyers(params: { limit?: number; region?: string; minTenders?: number; q?: string }) {
+    /** Buyers with the most competition problems (precomputed BuyerStats). */
+    async buyers(params: { limit?: number; region?: string; minTenders?: number; q?: string; sort?: string }) {
         const limit = Math.min(Math.max(params.limit ?? 50, 1), 200)
         const minTenders = params.minTenders ?? 20
-        const key = `risk:buyers:${limit}:${params.region ?? ''}:${minTenders}:${params.q ?? ''}`
-        return this.cached(key, 3600, async () => {
-            const region = params.region?.trim() ? Prisma.sql`AND t."buyerRegion" = ${params.region.trim()}` : Prisma.empty
-            const q = params.q?.trim() ? Prisma.sql`AND (t."procuringEntity" ILIKE ${'%' + params.q.trim() + '%'} OR t."buyerEdrpou" = ${params.q.trim()})` : Prisma.empty
-            const rows = await this.prisma.$queryRaw<
-                Array<{ edrpou: string; name: string | null; region: string | null; tenders: number; single: number; two: number;
-                        high_risk_wins: number; sanctioned_wins: number; won_total: number; won_high_risk: number }>
-            >(Prisma.sql`
-                WITH t AS (
-                    SELECT t.id, t."buyerEdrpou" AS edrpou, t."procuringEntity" AS name, t."buyerRegion" AS region
-                      FROM "Tender" t WHERE t."buyerEdrpou" IS NOT NULL ${region} ${q}
-                ), b AS (
-                    SELECT t.id, t.edrpou, t.name, t.region, count(DISTINCT p.edrpou) AS bidders
-                      FROM t JOIN "Participation" p ON p."tenderId" = t.id AND p.role = 'bidder'
-                     GROUP BY t.id, t.edrpou, t.name, t.region
-                ), w AS (
-                    SELECT t.id, p."bidAmount" AS amount, cr.score, cr.label
-                      FROM t JOIN "Participation" p ON p."tenderId" = t.id AND p.role = 'winner'
-                      LEFT JOIN "CompanyRisk" cr ON cr.edrpou = p.edrpou
-                )
-                SELECT b.edrpou, max(b.name) AS name, max(b.region) AS region, count(*)::int AS tenders,
-                       count(*) FILTER (WHERE b.bidders = 1)::int AS single, count(*) FILTER (WHERE b.bidders = 2)::int AS two,
-                       (SELECT count(*) FROM w WHERE w.id IN (SELECT id FROM b b2 WHERE b2.edrpou = b.edrpou) AND w.score >= 0.7)::int AS high_risk_wins,
-                       (SELECT count(*) FROM w WHERE w.id IN (SELECT id FROM b b2 WHERE b2.edrpou = b.edrpou) AND w.label)::int AS sanctioned_wins,
-                       (SELECT coalesce(sum(amount),0) FROM w WHERE w.id IN (SELECT id FROM b b2 WHERE b2.edrpou = b.edrpou))::float AS won_total,
-                       (SELECT coalesce(sum(amount),0) FROM w WHERE w.id IN (SELECT id FROM b b2 WHERE b2.edrpou = b.edrpou) AND (w.score >= 0.7 OR w.label))::float AS won_high_risk
-                  FROM b GROUP BY b.edrpou HAVING count(*) >= ${minTenders}
-                 ORDER BY (count(*) FILTER (WHERE b.bidders = 2))::float / count(*) DESC, tenders DESC
-                 LIMIT ${limit}`)
-            return {
-                minTenders,
-                items: rows.map((r) => ({
-                    edrpou: r.edrpou, name: r.name, region: r.region, tenders: r.tenders,
-                    singleBidderShare: r.tenders ? r.single / r.tenders : 0, twoBidderShare: r.tenders ? r.two / r.tenders : 0,
-                    highRiskWins: r.high_risk_wins, sanctionedWins: r.sanctioned_wins, wonTotal: r.won_total, wonHighRisk: r.won_high_risk,
-                })),
-            }
-        })
+        const where: Prisma.BuyerStatsWhereInput = { tenders: { gte: minTenders } }
+        if (params.region?.trim()) where.region = params.region.trim()
+        if (params.q?.trim()) where.OR = [{ edrpou: params.q.trim() }, { name: { contains: params.q.trim(), mode: 'insensitive' } }]
+        const rows = await this.prisma.$queryRaw<
+            Array<{ edrpou: string; name: string | null; region: string | null; tenders: number; single: number; two: number;
+                    high_risk_wins: number; sanctioned_wins: number; won_total: number; won_high_risk: number; repeated_pairs: number }>
+        >(Prisma.sql`
+            SELECT edrpou, name, region, tenders, "singleBidder" AS single, "twoBidder" AS two, "highRiskWins" AS high_risk_wins,
+                   "sanctionedWins" AS sanctioned_wins, "wonTotal" AS won_total, "wonHighRisk" AS won_high_risk, "repeatedPairs" AS repeated_pairs
+              FROM "BuyerStats"
+             WHERE tenders >= ${minTenders}
+               ${params.region?.trim() ? Prisma.sql`AND region = ${params.region.trim()}` : Prisma.empty}
+               ${params.q?.trim() ? Prisma.sql`AND (edrpou = ${params.q.trim()} OR name ILIKE ${'%' + params.q.trim() + '%'})` : Prisma.empty}
+             ORDER BY ${params.sort === 'money' ? Prisma.sql`"wonHighRisk" DESC` : params.sort === 'pairs' ? Prisma.sql`"repeatedPairs" DESC` : params.sort === 'single' ? Prisma.sql`"singleBidder"::float / tenders DESC` : Prisma.sql`"twoBidder"::float / tenders DESC`}, tenders DESC
+             LIMIT ${limit}`)
+        void where
+        return {
+            minTenders,
+            items: rows.map((r) => ({
+                edrpou: r.edrpou, name: r.name, region: r.region, tenders: r.tenders,
+                singleBidderShare: r.tenders ? r.single / r.tenders : 0, twoBidderShare: r.tenders ? r.two / r.tenders : 0,
+                highRiskWins: r.high_risk_wins, sanctionedWins: r.sanctioned_wins, wonTotal: r.won_total, wonHighRisk: r.won_high_risk,
+                repeatedPairs: r.repeated_pairs,
+            })),
+        }
     }
 
     // ---------------------------------------------------------------- groups

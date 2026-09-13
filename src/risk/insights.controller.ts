@@ -17,8 +17,8 @@ export class InsightsController {
     constructor(private readonly service: InsightsService) {}
 
     @Get('buyers')
-    buyers(@Query('limit') limit?: string, @Query('region') region?: string, @Query('minTenders') minTenders?: string, @Query('q') q?: string) {
-        return this.service.buyers({ limit: limit ? Number(limit) : undefined, region, minTenders: minTenders ? Number(minTenders) : undefined, q })
+    buyers(@Query('limit') limit?: string, @Query('region') region?: string, @Query('minTenders') minTenders?: string, @Query('q') q?: string, @Query('sort') sort?: string) {
+        return this.service.buyers({ limit: limit ? Number(limit) : undefined, region, minTenders: minTenders ? Number(minTenders) : undefined, q, sort })
     }
 
     @Get('buyer/:edrpou')
