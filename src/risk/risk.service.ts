@@ -289,6 +289,7 @@ export class RiskService {
                       valueCurrency: true,
                       status: true,
                       datePublished: true,
+                      buyerEdrpou: true,
                       rawData: true,
                   },
               })
@@ -340,6 +341,7 @@ export class RiskService {
                 tenderID: raw?.tenderID ?? null,
                 title: tender.title,
                 procuringEntity: tender.procuringEntity,
+                buyerEdrpou: tender.buyerEdrpou ?? ((raw?.procuringEntity as Record<string, unknown> | undefined)?.identifier as Record<string, unknown> | undefined)?.id ?? null,
                 valueAmount: tender.valueAmount,
                 valueCurrency: tender.valueCurrency,
                 status: tender.status,
