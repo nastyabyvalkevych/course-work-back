@@ -764,12 +764,14 @@ export class RiskService {
             }>
         >(Prisma.sql`
             WITH mine AS (
-                SELECT DISTINCT p."tenderId" FROM "Participation" p WHERE p.edrpou = ${edrpou} AND p.role = 'bidder'
+                SELECT p."tenderId", MIN(p."prozorroTenderId") AS tender_uid
+                FROM "Participation" p WHERE p.edrpou = ${edrpou} AND p.role = 'bidder'
+                GROUP BY p."tenderId"
             ),
             recent AS (
                 SELECT t.id, m.tender_uid AS "tenderID", t.title, t."procuringEntity",
                        t."datePublished", t."valueAmount"
-                FROM "Tender" t JOIN mine ON mine."tenderId" = t.id
+                FROM "Tender" t JOIN mine m ON m."tenderId" = t.id
                 ORDER BY t."datePublished" DESC NULLS LAST
                 LIMIT ${limit}
             ),
