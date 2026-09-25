@@ -208,6 +208,81 @@ export class InsightsService {
         return this.prisma.tightGroup.findMany({ where: { id: { in: m.map((x) => x.groupId) } }, include: { members: { select: { edrpou: true, name: true, score: true, label: true } } } })
     }
 
+    // ------------------------------------------------------- register updates
+
+    /** Versions of the AMCU register loaded into the database. */
+    async registerVersions() {
+        const rows = await this.prisma.$queryRaw<Array<{ version: string; rows: number; companies: number; decisions: number; latest: Date | null }>>(Prisma.sql`
+            SELECT "registerVersion" AS version, count(*)::int AS rows, count(DISTINCT edrpou)::int AS companies,
+                   count(DISTINCT ("decisionNumber","decisionDate"))::int AS decisions, max("decisionDate") AS latest
+              FROM "AmcuDecision" GROUP BY 1 ORDER BY 1`)
+        return rows
+    }
+
+    /**
+     * What changed between two register versions and how the system had rated the newly
+     * sanctioned companies before their decision became known. Scores come from the current
+     * model, which was trained on the older register, so for these companies they are genuine
+     * pre-decision assessments.
+     */
+    async registerUpdates(params: { from?: string; to?: string }) {
+        const versions = await this.registerVersions()
+        if (versions.length < 2 && !params.from) throw new NotFoundException('Only one register version is loaded')
+        const to = params.to ?? versions[versions.length - 1].version
+        const from = params.from ?? versions[Math.max(0, versions.findIndex((v) => v.version === to) - 1)].version
+        const key = `risk:register-updates:${from}:${to}`
+        return this.cached(key, 3600, async () => {
+            const added = await this.prisma.$queryRaw<Array<{
+                edrpou: string; name: string | null; decision_number: string; decision_date: Date; body: string | null;
+                score: number | null; rank: number | null; percentile: number | null; n_tenders: number | null; n_won: number | null;
+                coverage: string | null; region: string | null; degree: number | null;
+                fc_rank: number | null; fc_rank_full: number | null; fc_score: number | null;
+            }>>(Prisma.sql`
+                WITH old AS (SELECT DISTINCT edrpou FROM "AmcuDecision" WHERE "registerVersion" = ${from}),
+                     new AS (
+                        SELECT edrpou, max("companyName") AS name, min("decisionDate") AS decision_date,
+                               (array_agg("decisionNumber" ORDER BY "decisionDate"))[1] AS decision_number,
+                               (array_agg(body ORDER BY "decisionDate"))[1] AS body
+                          FROM "AmcuDecision" WHERE "registerVersion" = ${to} GROUP BY edrpou
+                     )
+                SELECT n.edrpou, coalesce(c.name, n.name) AS name, n.decision_number, n.decision_date, n.body,
+                       c.score, c.rank, c.percentile, c."nTenders" AS n_tenders, c."nWon" AS n_won, c.coverage, c.region, c.degree,
+                       b.rank AS fc_rank, b."rankFull" AS fc_rank_full, b.score AS fc_score
+                  FROM new n
+                  LEFT JOIN "CompanyRisk" c ON c.edrpou = n.edrpou
+                  LEFT JOIN "RiskBacktest" b ON b.edrpou = n.edrpou AND b."cutoffYear" = (SELECT max("cutoffYear") FROM "RiskBacktest")
+                 WHERE n.edrpou NOT IN (SELECT edrpou FROM old)
+                 ORDER BY n.decision_date DESC, n.decision_number`)
+            const removed = await this.prisma.$queryRaw<Array<{ edrpou: string; name: string | null }>>(Prisma.sql`
+                SELECT DISTINCT o.edrpou, max(o."companyName") AS name FROM "AmcuDecision" o
+                 WHERE o."registerVersion" = ${from} AND o.edrpou NOT IN (SELECT edrpou FROM "AmcuDecision" WHERE "registerVersion" = ${to})
+                 GROUP BY o.edrpou`)
+            const totalScored = await this.prisma.companyRisk.count()
+            const fcPop = await this.prisma.riskBacktest.count({ where: { cutoffYear: (await this.prisma.riskBacktest.aggregate({ _max: { cutoffYear: true } }))._max.cutoffYear ?? 0 } })
+            const inGraph = added.filter((a) => a.score !== null)
+            const high = inGraph.filter((a) => (a.score ?? 0) >= 0.7)
+            const raised = inGraph.filter((a) => (a.score ?? 0) >= 0.45)
+            const pcts = inGraph.map((a) => a.percentile ?? 0).sort((x, y) => x - y)
+            const medianPct = pcts.length ? pcts[Math.floor(pcts.length / 2)] : null
+            const top10 = inGraph.filter((a) => (a.rank ?? Infinity) <= totalScored * 0.1).length
+            return {
+                from, to, versions,
+                summary: {
+                    added: added.length, removed: removed.length, inGraph: inGraph.length, notInData: added.length - inGraph.length,
+                    fullCoverage: inGraph.filter((a) => a.coverage === 'full').length,
+                    highRisk: high.length, raisedOrHigh: raised.length, inTop10Pct: top10, medianPercentile: medianPct,
+                    totalScored, forecastPopulation: fcPop,
+                },
+                added: added.map((a) => ({
+                    edrpou: a.edrpou, name: a.name, decisionNumber: a.decision_number, decisionDate: a.decision_date, body: a.body,
+                    score: a.score, rank: a.rank, percentile: a.percentile, nTenders: a.n_tenders, nWon: a.n_won, coverage: a.coverage, region: a.region, degree: a.degree,
+                    forecastRank: a.fc_rank, forecastRankFull: a.fc_rank_full, forecastScore: a.fc_score,
+                })),
+                removed,
+            }
+        })
+    }
+
     // ---------------------------------------------------------------- links
 
     /** Companies sharing a phone / e-mail / contact person / address with the given one. */

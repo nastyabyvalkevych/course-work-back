@@ -9,6 +9,8 @@ import { InsightsService } from './insights.service'
  *   GET /api/risk/groups/:id
  *   GET /api/risk/company/:edrpou/links
  *   GET /api/risk/company/:edrpou/groups
+ *   GET /api/risk/register-updates?from&to   (new AMCU decisions and how the system had rated them)
+ *   GET /api/risk/register-versions
  *   GET /api/risk/markets?minTenders
  *   GET /api/risk/money?by=year|region
  */
@@ -46,6 +48,16 @@ export class InsightsController {
     @Get('company/:edrpou/groups')
     companyGroups(@Param('edrpou') edrpou: string) {
         return this.service.groupsOfCompany(edrpou.trim())
+    }
+
+    @Get('register-updates')
+    registerUpdates(@Query('from') from?: string, @Query('to') to?: string) {
+        return this.service.registerUpdates({ from, to })
+    }
+
+    @Get('register-versions')
+    registerVersions() {
+        return this.service.registerVersions()
     }
 
     @Get('markets')
