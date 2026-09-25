@@ -6,11 +6,13 @@ import { RiskService } from './risk.service'
  * Bid-rigging risk API (read-only, public).
  *   GET /api/risk/summary
  *   GET /api/risk/ranking?limit&offset&minTenders&excludeKnown&fullCoverageOnly&q&region
+ *   GET /api/risk/feature-norms             (median / p90 of each feature, "typical company")
  *   GET /api/risk/regions?minTenders        (per-oblast aggregates for the map)
  *   GET /api/risk/backtest                  (retrospective cutoffs)
  *   GET /api/risk/backtest/:year?limit&fullCoverageOnly
  *   GET /api/risk/company/:edrpou
- *   GET /api/risk/company/:edrpou/graph?limit
+ *   GET /api/risk/company/:edrpou/graph?limit   (limit up to 300)
+ *   GET /api/risk/company/:edrpou/evidence      (tenders behind each signal)
  *   GET /api/risk/tender/:id        (numeric id, hex prozorroId or UA-YYYY-... tenderID)
  */
 @Controller('api/risk')
@@ -41,6 +43,11 @@ export class RiskController {
             q,
             region,
         })
+    }
+
+    @Get('feature-norms')
+    featureNorms() {
+        return this.riskService.featureNorms()
     }
 
     @Get('regions')
@@ -75,6 +82,11 @@ export class RiskController {
     @Get('company/:edrpou/graph')
     graph(@Param('edrpou') edrpou: string, @Query('limit') limit?: string) {
         return this.riskService.graph(edrpou.trim(), limit ? Number(limit) : undefined)
+    }
+
+    @Get('company/:edrpou/evidence')
+    evidence(@Param('edrpou') edrpou: string) {
+        return this.riskService.evidence(edrpou.trim())
     }
 
     @Get('tender/:id')

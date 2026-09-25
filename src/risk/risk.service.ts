@@ -125,11 +125,48 @@ export class RiskService {
                     winRate: true,
                     degree: true,
                     region: true,
+                    features: true,
+                    topNeighbors: true,
                 },
             }),
             this.prisma.companyRisk.count({ where }),
         ])
-        return { total, limit, offset, items }
+        // the page shows "why" chips per row: it needs the feature values and how many
+        // of the closest partners are already sanctioned, not the neighbour list itself
+        return {
+            total,
+            limit,
+            offset,
+            items: items.map(({ topNeighbors, ...rest }) => ({
+                ...rest,
+                sanctionedNeighbors: Array.isArray(topNeighbors)
+                    ? (topNeighbors as Array<{ label?: boolean }>).filter((n) => n?.label).length
+                    : 0,
+            })),
+        }
+    }
+
+    /**
+     * Median and 90th percentile of every model feature among companies with 10+ tenders
+     * that are not in the register: the "typical company" the card compares against.
+     */
+    async featureNorms() {
+        const cacheKey = 'risk:feature-norms'
+        const cached = await this.redisService.get(cacheKey)
+        if (cached) {
+            return cached
+        }
+        const rows = await this.prisma.$queryRaw<Array<{ feature: string; p50: number; p90: number }>>(Prisma.sql`
+            SELECT f.key AS feature,
+                   PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY f.value::text::float)::float AS p50,
+                   PERCENTILE_CONT(0.9) WITHIN GROUP (ORDER BY f.value::text::float)::float AS p90
+            FROM "CompanyRisk" c, jsonb_each(c.features::jsonb) f
+            WHERE c."nTenders" >= 10 AND NOT c.label AND jsonb_typeof(f.value) = 'number'
+            GROUP BY f.key
+        `)
+        const response = Object.fromEntries(rows.map((r) => [r.feature, { p50: r.p50, p90: r.p90 }]))
+        await this.redisService.set(cacheKey, response, 3600)
+        return response
     }
 
     /** Per-oblast aggregates for the map: companies, sanctioned, high-risk share, mean risk, tenders. */
@@ -218,6 +255,7 @@ export class RiskService {
 
     /** Ego network (depth 1) for the graph view. */
     async graph(edrpou: string, limit = 40) {
+        limit = Math.min(Math.max(limit, 1), 300)
         const cacheKey = `risk:graph:${edrpou}:${limit}`
         const cached = await this.redisService.get(cacheKey)
         if (cached) {
@@ -260,6 +298,157 @@ export class RiskService {
             })),
         ]
         const response = { nodes, edges: inner.map((e) => ({ source: e.a, target: e.b, weight: e.weight })) }
+        await this.redisService.set(cacheKey, response, 3600)
+        return response
+    }
+
+    /**
+     * Concrete tenders behind each collusion signal on the company card: which tenders
+     * had two bidders, bids without a discount, near-identical or same-hour bids with
+     * the top partner, and so on. Same rules as evaluation/build_graph.py and
+     * extra_features.py (one bid per tender = the lowest lot amount; for a sanctioned
+     * company only tenders before its first decision).
+     */
+    async evidence(edrpou: string) {
+        const cacheKey = `risk:evidence:${edrpou}`
+        const cached = await this.redisService.get(cacheKey)
+        if (cached) {
+            return cached
+        }
+        const risk = await this.prisma.companyRisk.findUnique({
+            where: { edrpou },
+            select: { label: true, firstDecision: true },
+        })
+        if (!risk) {
+            throw new NotFoundException(`Company ${edrpou} not found`)
+        }
+        const [partner] = await this.coBidders(edrpou, 1)
+        const cut = risk.label && risk.firstDecision ? risk.firstDecision : new Date('2100-01-01')
+        const rows = await this.prisma.$queryRaw<
+            Array<{
+                id: number
+                tenderID: string | null
+                title: string | null
+                buyer: string | null
+                datePublished: Date | null
+                valueAmount: number | null
+                bidders: number
+                minAmount: number | null
+                secondAmount: number | null
+                cv: number | null
+                amount: number | null
+                bidDate: Date | null
+                winner: string | null
+                partnerIn: boolean
+                partnerAmount: number | null
+                partnerBidDate: Date | null
+            }>
+        >(Prisma.sql`
+            WITH mine AS (
+                SELECT "tenderId", MIN("bidAmount") AS amount, MIN("bidDate") AS bid_date,
+                       MIN("prozorroTenderId") AS tender_uid
+                FROM "Participation"
+                WHERE edrpou = ${edrpou} AND role = 'bidder' AND COALESCE("datePublished", '1900-01-01') < ${cut}
+                GROUP BY "tenderId"
+            ),
+            bids AS (
+                SELECT p."tenderId", p.edrpou, MIN(p."bidAmount") AS amount, MIN(p."bidDate") AS bid_date
+                FROM "Participation" p JOIN mine m ON m."tenderId" = p."tenderId"
+                WHERE p.role = 'bidder'
+                GROUP BY p."tenderId", p.edrpou
+            ),
+            agg AS (
+                SELECT "tenderId", COUNT(*)::int AS bidders, MIN(amount) AS min_amount,
+                       (ARRAY_AGG(amount ORDER BY amount) FILTER (WHERE amount IS NOT NULL))[2] AS second_amount,
+                       CASE WHEN COUNT(amount) >= 2 AND AVG(amount) > 0
+                            THEN (STDDEV_POP(amount) / AVG(amount))::float END AS cv
+                FROM bids GROUP BY "tenderId"
+            ),
+            pb AS MATERIALIZED (            -- the top partner's bids, filtered once (a join on bids loops per row)
+                SELECT * FROM bids WHERE edrpou = ${partner?.edrpou ?? ''}
+            ),
+            win AS (
+                SELECT DISTINCT ON (w."tenderId") w."tenderId", w.edrpou
+                FROM "Participation" w JOIN mine m ON m."tenderId" = w."tenderId"
+                WHERE w.role = 'winner'
+                ORDER BY w."tenderId", (w.edrpou = ${edrpou}) DESC
+            )
+            SELECT t.id, m.tender_uid AS "tenderID", t.title, t."procuringEntity" AS buyer,
+                   t."datePublished", t."valueAmount",
+                   a.bidders, a.min_amount AS "minAmount", a.second_amount AS "secondAmount", a.cv, m.amount, m.bid_date AS "bidDate",
+                   w.edrpou AS winner,
+                   (pb.edrpou IS NOT NULL) AS "partnerIn", pb.amount AS "partnerAmount", pb.bid_date AS "partnerBidDate"
+            FROM mine m
+            JOIN "Tender" t ON t.id = m."tenderId"
+            JOIN agg a ON a."tenderId" = m."tenderId"
+            LEFT JOIN win w ON w."tenderId" = m."tenderId"
+            LEFT JOIN pb ON pb."tenderId" = m."tenderId"
+            ORDER BY t."datePublished" DESC NULLS LAST
+        `)
+        type Row = (typeof rows)[number]
+        const minutes = (r: Row) =>
+            r.bidDate && r.partnerBidDate ? Math.abs(r.bidDate.getTime() - r.partnerBidDate.getTime()) / 60000 : null
+        const example = (r: Row) => ({
+            id: r.id,
+            tenderID: r.tenderID,
+            title: r.title,
+            buyer: r.buyer,
+            datePublished: r.datePublished,
+            valueAmount: r.valueAmount,
+            bidders: r.bidders,
+            amount: r.amount,
+            minAmount: r.minAmount,
+            secondAmount: r.secondAmount,
+            cv: r.cv,
+            partnerAmount: r.partnerIn ? r.partnerAmount : null,
+            minutesToPartner: r.partnerIn ? minutes(r) : null,
+            winner: r.winner === edrpou ? 'self' : partner && r.winner === partner.edrpou ? 'partner' : r.winner ? 'other' : null,
+        })
+        const tests: Record<string, (r: Row) => boolean> = {
+            two_bidders: (r) => r.bidders === 2,
+            cover_bids: (r) => !!r.amount && !!r.valueAmount && r.amount / r.valueAmount >= 0.99,
+            lost_cheapest: (r) =>
+                r.winner !== edrpou && r.amount != null && r.minAmount != null && r.amount <= r.minAmount + 1e-6 && r.bidders > 1,
+            won_not_cheapest: (r) => r.winner === edrpou && r.amount != null && r.minAmount != null && r.amount > r.minAmount + 1e-6,
+            with_partner: (r) => r.partnerIn,
+            near_identical: (r) =>
+                r.partnerIn && !!r.amount && !!r.partnerAmount && !!r.valueAmount &&
+                Math.abs(r.amount - r.partnerAmount) / r.valueAmount < 0.01,
+            fast_bids: (r) => r.partnerIn && (minutes(r) ?? Infinity) <= 60,
+            round_bids: (r) => !!r.amount && r.amount >= 1000 && Math.abs(r.amount / 1000 - Math.round(r.amount / 1000)) < 1e-9,
+            small_gap: (r) =>
+                !!r.minAmount && !!r.secondAmount && (r.secondAmount - r.minAmount) / r.minAmount <= 0.02,
+            similar_bids: (r) => r.cv != null && r.cv <= 0.03,
+            single_bidder: (r) => r.bidders === 1,
+        }
+        const signals = Object.fromEntries(
+            Object.entries(tests).map(([k, test]) => {
+                const hit = rows.filter(test)
+                return [k, { count: hit.length, examples: hit.slice(0, 10).map(example) }]
+            }),
+        )
+        const buyers = new Map<string, { name: string; tenders: number; won: number }>()
+        for (const r of rows) {
+            if (!r.buyer) continue
+            const b = buyers.get(r.buyer) ?? { name: r.buyer, tenders: 0, won: 0 }
+            b.tenders += 1
+            if (r.winner === edrpou) b.won += 1
+            buyers.set(r.buyer, b)
+        }
+        const pairRows = rows.filter((r) => r.partnerIn)
+        const response = {
+            tenders: rows.length,
+            cutoff: risk.label ? risk.firstDecision : null,
+            partner: partner
+                ? {
+                      ...partner,
+                      pairWonSelf: pairRows.filter((r) => r.winner === edrpou).length,
+                      pairWonPartner: pairRows.filter((r) => r.winner === partner.edrpou).length,
+                  }
+                : null,
+            topBuyers: [...buyers.values()].sort((a, b) => b.tenders - a.tenders).slice(0, 5),
+            signals,
+        }
         await this.redisService.set(cacheKey, response, 3600)
         return response
     }
@@ -578,7 +767,7 @@ export class RiskService {
                 SELECT DISTINCT p."tenderId" FROM "Participation" p WHERE p.edrpou = ${edrpou} AND p.role = 'bidder'
             ),
             recent AS (
-                SELECT t.id, t."rawData"->>'tenderID' AS "tenderID", t.title, t."procuringEntity",
+                SELECT t.id, m.tender_uid AS "tenderID", t.title, t."procuringEntity",
                        t."datePublished", t."valueAmount"
                 FROM "Tender" t JOIN mine ON mine."tenderId" = t.id
                 ORDER BY t."datePublished" DESC NULLS LAST

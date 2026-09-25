@@ -2,7 +2,7 @@ import { ReliabilityProfile } from './markov'
 
 /**
  * Operational profile of the risk API. Module reliabilities and sojourn times
- * come from the test plan (docs/тест_план_і_надійність.md): autocannon load
+ * come from the test plan (предмети/тестування_і_надійність/тест_план_і_надійність.md): autocannon load
  * tests, fault injection and the unit/e2e suites. Task weights approximate
  * how the Next.js pages call the API (a ranking page = summary + ranking,
  * a company page = card + graph, the map = regions + ranking).
