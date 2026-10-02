@@ -1,6 +1,7 @@
 import { Controller, Get, HttpCode, Res } from '@nestjs/common'
 import type { Response } from 'express'
 
+import { NlpService } from '../nlp/nlp.service'
 import { PrismaService } from '../prisma/prisma.service'
 import { RedisService } from '../redis/redis.service'
 
@@ -13,6 +14,7 @@ export class HealthController {
     constructor(
         private readonly prisma: PrismaService,
         private readonly redis: RedisService,
+        private readonly nlp: NlpService,
     ) {}
 
     @Get()
@@ -29,12 +31,17 @@ export class HealthController {
         } catch {
             database = 'down'
         }
+        // Лематизатор необов'язковий: за його відмови пошук працює на словоформах, стан — degraded (R4.1).
+        const lemmatizer = (await this.nlp.isLemmatizerAvailable())
+            ? 'ok'
+            : 'unavailable (surface-form search)'
         const body = {
-            status: database === 'ok' ? 'ok' : 'degraded',
+            status: database === 'ok' && lemmatizer === 'ok' ? 'ok' : 'degraded',
             service: 'prozorro-insight-backend',
             components: {
                 database,
                 cache: this.redis.isReady() ? 'ok' : 'unavailable (no-cache mode)',
+                lemmatizer,
             },
             latencyMs: Date.now() - started,
             timestamp: new Date().toISOString(),

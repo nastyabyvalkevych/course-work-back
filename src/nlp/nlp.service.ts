@@ -16,10 +16,16 @@ export class NlpService {
         return this.lemmatize(filtered)
     }
 
+    /**
+     * Нормалізація пошукового запиту (R2.2): лише початкові форми, без поверхневих словоформ,
+     * щоб набір слів для пошуку не залежав від граматичної форми запиту. Індекс містить і
+     * словоформи, і леми (processText), тож збіг за лемою завжди можливий.
+     */
     async processQuery(text: string): Promise<string[]> {
         const tokens = this.tokenize(text)
         const filtered = this.removeStopWords(tokens)
-        return this.lemmatize(filtered)
+        const lemmas = await this.lemmatize(filtered, false)
+        return [...new Set(lemmas)]
     }
 
     tokenize(text: string | number | boolean | null | undefined): string[] {
@@ -42,7 +48,7 @@ export class NlpService {
         return tokens.filter((token) => token && !STOP_WORDS.has(token))
     }
 
-    async lemmatize(tokens: string[]): Promise<string[]> {
+    async lemmatize(tokens: string[], keepSurface = true): Promise<string[]> {
         if (!tokens.length) {
             return []
         }
@@ -61,7 +67,9 @@ export class NlpService {
             return tokens
         }
 
-        const lemmas = await this.lemmatizeRemote(ukrainianTokens)
+        const lemmas = await this.lemmatizeRemote(ukrainianTokens).catch(
+            () => ukrainianTokens,
+        )
         const normalized: string[] = []
         tokens.forEach((token, index) => {
             if (!UKRAINIAN_WORD.test(token)) {
@@ -70,12 +78,29 @@ export class NlpService {
             }
             const lemmaIndex = ukrainianIndexes.indexOf(index)
             const lemma = lemmas[lemmaIndex] ?? token
-            normalized.push(token)
-            if (lemma !== token) {
+            if (keepSurface) {
+                normalized.push(token)
+            }
+            if (lemma !== token || !keepSurface) {
                 normalized.push(lemma)
             }
         })
         return normalized
+    }
+
+    /** Перевірка доступності лематизатора для /health. */
+    async isLemmatizerAvailable(): Promise<boolean> {
+        try {
+            const response = await fetch(this.lemmatizerUrl, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ tokens: ['перевірка'], language: 'uk' }),
+                signal: AbortSignal.timeout(1000),
+            })
+            return response.ok
+        } catch {
+            return false
+        }
     }
 
     private async lemmatizeRemote(tokens: string[]): Promise<string[]> {
@@ -84,6 +109,7 @@ export class NlpService {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ tokens, language: 'uk' }),
+                signal: AbortSignal.timeout(2000),
             })
 
             if (!response.ok) {

@@ -66,8 +66,9 @@ export class SearchQueryDto {
     dateTo?: string
 
     @IsOptional()
+    // Лише 'true'/'false'; інше значення лишається рядком і відхиляється @IsBoolean.
     @Transform(({ value }) =>
-        value === undefined ? undefined : value === 'true' || value === true,
+        value === 'true' ? true : value === 'false' ? false : value,
     )
     @IsBoolean()
     useMultifield?: boolean

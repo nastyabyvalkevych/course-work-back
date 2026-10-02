@@ -179,13 +179,19 @@ export class SearchService {
         options: SearchOptions = {},
     ): Promise<SearchResponse> {
         const startTime = Date.now()
-        const queryTerms = await this.nlpService.processText(query)
+        const queryTerms = await this.nlpService.processQuery(query)
         const resolvedOptions = this.resolveSearchOptions(options)
         const cacheKey = this.buildSearchCacheKey(query, resolvedOptions)
 
         const cached = await this.redisService.get<SearchResponse>(cacheKey)
         if (cached) {
-            return cached
+            return {
+                ...cached,
+                metadata: {
+                    ...cached.metadata,
+                    queryTimeMs: Date.now() - startTime,
+                },
+            }
         }
 
         if (!queryTerms.length) {
