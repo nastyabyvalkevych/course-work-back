@@ -22,10 +22,18 @@ export class NlpService {
      * словоформи, і леми (processText), тож збіг за лемою завжди можливий.
      */
     async processQuery(text: string): Promise<string[]> {
+        return (await this.processQueryDetailed(text)).terms
+    }
+
+    /** Те саме, що processQuery, плюс ознака, що лематизатор був недоступний і слова лишились у вихідній формі. */
+    async processQueryDetailed(
+        text: string,
+    ): Promise<{ terms: string[]; degraded: boolean }> {
         const tokens = this.tokenize(text)
         const filtered = this.removeStopWords(tokens)
-        const lemmas = await this.lemmatize(filtered, false)
-        return [...new Set(lemmas)]
+        const state = { degraded: false }
+        const lemmas = await this.lemmatize(filtered, false, state)
+        return { terms: [...new Set(lemmas)], degraded: state.degraded }
     }
 
     tokenize(text: string | number | boolean | null | undefined): string[] {
@@ -48,7 +56,11 @@ export class NlpService {
         return tokens.filter((token) => token && !STOP_WORDS.has(token))
     }
 
-    async lemmatize(tokens: string[], keepSurface = true): Promise<string[]> {
+    async lemmatize(
+        tokens: string[],
+        keepSurface = true,
+        state?: { degraded: boolean },
+    ): Promise<string[]> {
         if (!tokens.length) {
             return []
         }
@@ -68,7 +80,10 @@ export class NlpService {
         }
 
         const lemmas = await this.lemmatizeRemote(ukrainianTokens).catch(
-            () => ukrainianTokens,
+            () => {
+                if (state) state.degraded = true
+                return ukrainianTokens
+            },
         )
         const normalized: string[] = []
         tokens.forEach((token, index) => {

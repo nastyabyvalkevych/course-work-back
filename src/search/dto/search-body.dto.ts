@@ -3,6 +3,7 @@ import {
     IsArray,
     IsBoolean,
     IsDateString,
+    IsIn,
     IsInt,
     IsNotEmpty,
     IsNumber,
@@ -72,11 +73,11 @@ export class SearchBodyDto {
     dateTo?: string
 
     @IsOptional()
-    @IsString()
+    @IsIn(['bm25f_default', 'da_bm25f_combined'])
     profile?: 'bm25f_default' | 'da_bm25f_combined'
 
     @IsOptional()
-    @IsString()
+    @IsIn(['score', 'date'])
     sort?: 'score' | 'date'
 
     @IsOptional()

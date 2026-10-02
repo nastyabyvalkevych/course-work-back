@@ -179,7 +179,8 @@ export class SearchService {
         options: SearchOptions = {},
     ): Promise<SearchResponse> {
         const startTime = Date.now()
-        const queryTerms = await this.nlpService.processQuery(query)
+        const { terms: queryTerms, degraded } =
+            await this.nlpService.processQueryDetailed(query)
         const resolvedOptions = this.resolveSearchOptions(options)
         const cacheKey = this.buildSearchCacheKey(query, resolvedOptions)
 
@@ -207,7 +208,9 @@ export class SearchService {
                     queryTerms,
                 },
             }
-            await this.redisService.set(cacheKey, emptyResponse)
+            if (!degraded) {
+                await this.redisService.set(cacheKey, emptyResponse)
+            }
             return emptyResponse
         }
 
@@ -301,7 +304,11 @@ export class SearchService {
                 queryTerms,
             },
         }
-        await this.redisService.set(cacheKey, response)
+        // Відповідь, побудовану на словоформах за недоступного лематизатора, не кешуємо:
+        // інакше після відновлення лематизатора ще годину видавалась би деградована видача.
+        if (!degraded) {
+            await this.redisService.set(cacheKey, response)
+        }
 
         return response
     }
