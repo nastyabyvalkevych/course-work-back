@@ -628,8 +628,15 @@ export class SearchService {
             return tenderIds.map((tenderId) => ({ tenderId, score: 0 }))
         }
 
+        // Довжини полів входять у формулу лише з множником b; за b = 0 для всіх полів
+        // (типовий профіль) їх агрегація по всіх кандидатах — зайві секунди на частих словах.
+        const needsLengths =
+            params.b > 0 ||
+            Object.values(params.fieldB ?? {}).some((value) => value > 0)
         const [fieldLengthsAll, indexEntries, termStats] = await Promise.all([
-            this.getFieldLengthsBatch(tenderIds),
+            needsLengths
+                ? this.getFieldLengthsBatch(tenderIds)
+                : Promise.resolve(new Map<number, Record<string, number>>()),
             this.prisma.tenderIndex.findMany({
                 where: {
                     tenderId: { in: tenderIds },
@@ -749,7 +756,8 @@ export class SearchService {
             return []
         }
 
-        if (!filters) {
+        // Без жодного фільтра запит до БД з id IN (усі кандидати) лише повторює список.
+        if (!filters || !Object.keys(filters).length) {
             return candidateIds
         }
 
