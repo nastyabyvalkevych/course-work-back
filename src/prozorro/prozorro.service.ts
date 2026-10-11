@@ -254,6 +254,11 @@ export class ProzorroService {
 
         const publishedAt = this.resolvePublishedDate(apiData)
         const modifiedAt = this.resolveModifiedDate(apiData)
+        const tenderID = typeof apiData.tenderID === 'string' && apiData.tenderID.trim() ? apiData.tenderID.trim() : null
+        const procurementMethodType =
+            typeof apiData.procurementMethodType === 'string' && apiData.procurementMethodType ? apiData.procurementMethodType : null
+        const rawBuyerId = apiData.procuringEntity?.identifier?.id
+        const buyerEdrpou = rawBuyerId != null && String(rawBuyerId).replace(/\s+/g, '') ? String(rawBuyerId).replace(/\s+/g, '') : null
 
         return {
             prozorroId:
@@ -269,6 +274,11 @@ export class ProzorroService {
             dateModified: modifiedAt,
             documentLength: 0,
             rawData: apiData,
+            // set only when present, so an update never erases a value; buyerRegion is
+            // filled by the pipeline and left untouched here
+            ...(tenderID ? { tenderID } : {}),
+            ...(procurementMethodType ? { procurementMethodType } : {}),
+            ...(buyerEdrpou ? { buyerEdrpou } : {}),
         }
     }
 

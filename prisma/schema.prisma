@@ -8,30 +8,36 @@ datasource db {
 }
 
 model Tender {
-  id              Int            @id @default(autoincrement())
-  prozorroId      String         @unique
-  title           String?
-  description     String?
-  procuringEntity String?
-  cpvCodes        String[]
-  valueAmount     Float?
-  valueCurrency   String?
-  status          String?
-  datePublished   DateTime?
-  dateModified    DateTime?
-  documentLength  Int            @default(0)
-  buyerEdrpou     String?        // procuringEntity.identifier.id
-  buyerRegion     String?        // normalised oblast of the buyer
-  cpvDivision     String?        // first two digits of items[0].classification.id (ДК021 division)
-  rawData         Json
-  createdAt       DateTime       @default(now())
-  updatedAt       DateTime       @updatedAt
-  tenderIndexes   TenderIndex[]
-  participations  Participation[]
-  sample          TenderSample?
+  id                    Int            @id @default(autoincrement())
+  prozorroId            String         @unique // технічний id документа в ЦБД
+  tenderID              String?        @unique // UA-YYYY-MM-DD-NNNNNN-x, людський номер тендера
+  title                 String?
+  description           String?
+  procuringEntity       String? // назва замовника в документі цього тендера (факт тендера, не атрибут організації)
+  buyerRegion           String? // область замовника в документі (канонічна назва), як і назва — факт тендера
+  buyerEdrpou           String? // код замовника в документі (сирий)
+  buyerCode             String? // посилання на Organization; NULL для кодів-заглушок
+  procurementMethodType String? // тип процедури
+  status                String?
+  valueAmount           Float? // очікувана вартість тендера; numeric не застосовано: зміна типу переписала б таблицю з документами (ЛР3)
+  valueCurrency         String?
+  cpvCodes              String[] // коди CPV для пошукового модуля курсової; модель дослідження бере їх з TenderItem
+  datePublished         DateTime? // UTC без часового поясу: зміна типу переписала б таблицю з документами (ЛР3)     
+  dateModified          DateTime?
+  documentLength        Int            @default(0)
+  rawData               Json // повний документ Prozorro — першоджерело
+  createdAt             DateTime       @default(now())
+  updatedAt             DateTime       @updatedAt
+  buyer                 Organization?  @relation("TenderBuyer", fields: [buyerCode], references: [code])
+  tenderIndexes         TenderIndex[]
+  samples               TenderSample[]
+  lots                  Lot[]
+  items                 TenderItem[]
+  bids                  Bid[]
+  awards                Award[]
 
   @@index([buyerEdrpou])
-  @@index([cpvDivision])
+  @@index([buyerCode])
 }
 
 model TenderIndex {
@@ -48,46 +54,46 @@ model TenderIndex {
 }
 
 model TermStatistics {
-  id                Int     @id @default(autoincrement())
-  term              String  @unique
-  documentFrequency Int
-  idf               Float
-  dfTitle           Int     @default(0)
-  dfDescription     Int     @default(0)
-  dfCpv             Int     @default(0)
-  collectionFrequency Int   @default(0)
-  updatedAt         DateTime @updatedAt
+  id                  Int      @id @default(autoincrement())
+  term                String   @unique
+  documentFrequency   Int
+  idf                 Float
+  dfTitle             Int      @default(0)
+  dfDescription       Int      @default(0)
+  dfCpv               Int      @default(0)
+  collectionFrequency Int      @default(0)
+  updatedAt           DateTime @updatedAt
 }
 
 model CollectionStats {
-  id                 Int      @id @default(autoincrement())
-  totalDocuments     Int
-  avgDocumentLength  Float
-  uniqueTerms        Int
-  avgTitleLength     Float?
+  id                   Int      @id @default(autoincrement())
+  totalDocuments       Int
+  avgDocumentLength    Float
+  uniqueTerms          Int
+  avgTitleLength       Float?
   avgDescriptionLength Float?
-  avgCpvCodesLength  Float?
-  avgFieldLengths    Json?
-  version            Int      @default(1)
-  updatedAt          DateTime @updatedAt
+  avgCpvCodesLength    Float?
+  avgFieldLengths      Json?
+  version              Int      @default(1)
+  updatedAt            DateTime @updatedAt
 }
 
 model TestQuery {
-  id          Int                 @id @default(autoincrement())
-  queryText   String
-  category    String?
-  difficulty  String?
-  createdAt   DateTime            @default(now())
-  judgments   RelevanceJudgment[]
+  id         Int                 @id @default(autoincrement())
+  queryText  String
+  category   String?
+  difficulty String?
+  createdAt  DateTime            @default(now())
+  judgments  RelevanceJudgment[]
 }
 
 model RelevanceJudgment {
-  id             Int      @id @default(autoincrement())
+  id             Int       @id @default(autoincrement())
   queryId        Int
   tenderId       Int
   relevanceScore Int
   comment        String?
-  createdAt      DateTime @default(now())
+  createdAt      DateTime  @default(now())
   query          TestQuery @relation(fields: [queryId], references: [id], onDelete: Cascade)
 
   @@index([queryId])
@@ -95,79 +101,79 @@ model RelevanceJudgment {
 }
 
 model ExperimentResult {
-  id               Int      @id @default(autoincrement())
-  experimentName   String
-  k1               Float
-  b                Float
-  fieldWeights     Json?
+  id                Int      @id @default(autoincrement())
+  experimentName    String
+  k1                Float
+  b                 Float
+  fieldWeights      Json?
   usesLemmatization Boolean
-  usesMultifield   Boolean
-  precisionAt10    Float
-  recallAt10       Float
-  meanAvgPrecision Float
-  numTestQueries   Int
-  createdAt        DateTime @default(now())
+  usesMultifield    Boolean
+  precisionAt10     Float
+  recallAt10        Float
+  meanAvgPrecision  Float
+  numTestQueries    Int
+  createdAt         DateTime @default(now())
 }
 
 // OSINT Analysis Models (OECD bid-rigging indicators)
 
 model OsintReport {
-  id            Int      @id @default(autoincrement())
-  generatedAt   DateTime @default(now())
-  numTenders    Int
-  metadata      Json     // thresholds, versions, etc.
+  id          Int      @id @default(autoincrement())
+  generatedAt DateTime @default(now())
+  numTenders  Int
+  metadata    Json // thresholds, versions, etc.
 
   // Summary stats
-  singleBidderCount    Int
-  singleBidderRatio    Float
-  multiBidderCount     Int
+  singleBidderCount Int
+  singleBidderRatio Float
+  multiBidderCount  Int
 
   // Aggregated data (JSON for flexibility)
-  topSingleBidderEntities Json  // [{edrpou, name, count}]
-  coParticipationPairs    Json  // [{edrpouA, edrpouB, nameA, nameB, count, tenderIds}]
-  winRateAnomalies        Json  // [{edrpou, name, bids, wins, rate}]
-  regionalDominance       Json  // [{region, dominantEdrpou, dominantName, wins, total, pct}]
-  hhiPerCpv               Json  // [{cpvDivision, totalAwards, uniqueSuppliers, hhi, level}]
-  bidRotationCohorts      Json  // [{cohortEdrs, numTenders, winnersCount, uniformity}]
+  topSingleBidderEntities Json // [{edrpou, name, count}]
+  coParticipationPairs    Json // [{edrpouA, edrpouB, nameA, nameB, count, tenderIds}]
+  winRateAnomalies        Json // [{edrpou, name, bids, wins, rate}]
+  regionalDominance       Json // [{region, dominantEdrpou, dominantName, wins, total, pct}]
+  hhiPerCpv               Json // [{cpvDivision, totalAwards, uniqueSuppliers, hhi, level}]
+  bidRotationCohorts      Json // [{cohortEdrs, numTenders, winnersCount, uniformity}]
 
   @@index([generatedAt])
 }
 
 model SupplierOsintStats {
-  id              Int      @id @default(autoincrement())
-  edrpou          String   @unique
-  name            String?
+  id     Int     @id @default(autoincrement())
+  edrpou String  @unique
+  name   String?
 
   // Win rate stats
-  totalBids       Int      @default(0)
-  totalWins       Int      @default(0)
-  winRate         Float    @default(0)
+  totalBids Int   @default(0)
+  totalWins Int   @default(0)
+  winRate   Float
 
   // Co-participation (top partners)
-  topPartners     Json?    // [{edrpou, name, count}]
+  topPartners Json? // [{edrpou, name, count}]
 
   // Regional stats
-  regionsActive   String[] // regions where this supplier participates
-  dominantRegion  String?  // region where they dominate (if any)
+  regionsActive  String[] // regions where this supplier participates
+  dominantRegion String? // region where they dominate (if any)
 
-  updatedAt       DateTime @updatedAt
+  updatedAt DateTime @updatedAt
 
   @@index([winRate])
   @@index([totalWins])
 }
 
 model ProcuringEntityOsintStats {
-  id                  Int      @id @default(autoincrement())
-  edrpou              String   @unique
-  name                String?
-  region              String?
+  id     Int     @id @default(autoincrement())
+  edrpou String  @unique
+  name   String?
+  region String?
 
   // Single bidder stats
-  totalTenders        Int      @default(0)
-  singleBidderTenders Int      @default(0)
-  singleBidderRatio   Float    @default(0)
+  totalTenders        Int   @default(0)
+  singleBidderTenders Int   @default(0)
+  singleBidderRatio   Float @default(0)
 
-  updatedAt           DateTime @updatedAt
+  updatedAt DateTime @updatedAt
 
   @@index([singleBidderRatio])
   @@index([singleBidderTenders])
@@ -177,209 +183,366 @@ model ProcuringEntityOsintStats {
 // AMCU bid-rigging labels and graph-building tables (master thesis, Sept 2026)
 // ---------------------------------------------------------------------------
 
-/// One row per (decision, company, court event) from the AMCU consolidated
-/// register "Зведені відомості про рішення органів Комітету ... спотворення
-/// результатів торгів". Loaded by evaluation/load_amcu_labels.py.
-model AmcuDecision {
+/// Рядок зведеного реєстру рішень АМКУ «як є» (одна версія реєстру = набір рядків).
+/// Нормалізовані дані — Decision / DecisionParty / CourtEvent (процедура sp_refresh_decisions).
+model AmcuRegisterRow {
   id              Int       @id @default(autoincrement())
   decisionNumber  String
-  decisionDate    DateTime
-  body            String?   // орган АМКУ, що прийняв рішення
-  edrpou          String    // ЄДРПОУ (8) або ІПН ФОП (10)
+  decisionDate    DateTime  @db.Timestamptz(3)
+  body            String? // орган АМКУ, що прийняв рішення
+  edrpou          String // код суб'єкта в реєстрі (після доповнення втрачених нулів)
   companyName     String?
   courtCaseNumber String?
   courtName       String?
-  courtDate       DateTime?
-  courtContent    String?   // зміст рішення суду (скасовано / відмовлено ...)
-  reviewNumber    String?   // № рішення органу АМКУ за результатами перегляду
-  reviewDate      DateTime?
+  courtDate       DateTime? @db.Timestamptz(3)
+  courtContent    String?
+  reviewNumber    String?
+  reviewDate      DateTime? @db.Timestamptz(3)
   reviewContent   String?
   notes           String?
-  registerVersion String    // дата файлу реєстру, напр. 2026-08-31
-  createdAt       DateTime  @default(now())
+  registerVersion String // дата файлу реєстру, напр. 2026-08-31
+  createdAt       DateTime  @default(now()) @db.Timestamptz(3)
 
-  @@unique([registerVersion, decisionNumber, decisionDate, edrpou, courtName, courtDate], name: "amcu_row_key")
+  @@unique([registerVersion, decisionNumber, decisionDate, body, edrpou, courtName, courtDate], map: "amcu_register_row_key") // у базі — NULLS NOT DISTINCT
   @@index([edrpou])
-  @@index([decisionDate])
+  @@index([registerVersion])
 }
 
-/// Flat "who took part in which tender" table derived from Tender.rawData
-/// (bids[].tenderers[], awards[].suppliers[]). Built by
-/// evaluation/build_participations.py; source of graph edges.
-model Participation {
-  id               Int       @id @default(autoincrement())
-  tenderId         Int
-  tender           Tender    @relation(fields: [tenderId], references: [id], onDelete: Cascade)
-  prozorroTenderId String    // UA-YYYY-MM-DD-NNNNNN-x
-  edrpou           String
-  name             String?
-  role             String    // bidder | winner
-  lotId            String?
-  bidAmount        Float?
-  bidDate          DateTime?
-  bidStatus        String?
-  isWinner         Boolean   @default(false)
-  datePublished    DateTime?
-  region           String?   // область реєстрації учасника з картки в Prozorro
-
-  @@index([edrpou])
-  @@index([tenderId])
-  @@index([prozorroTenderId])
-  @@index([edrpou, datePublished])
-  @@index([tenderId, role, edrpou])   // co-bidder / winner joins in the risk API
-}
-
-/// Membership of a tender in the thesis dataset: positive (has a sanctioned
-/// participant) or unlabeled (stratified sample). Built by
-/// evaluation/sample_unlabeled.py finalize.
+/// Включення тендера у вибірку дослідження (слабка сутність, власник — Тендер).
 model TenderSample {
-  id                    Int      @id @default(autoincrement())
-  tenderId              Int      @unique
-  tender                Tender   @relation(fields: [tenderId], references: [id], onDelete: Cascade)
-  sampleGroup           String   // positive | unlabeled
-  year                  Int
-  procurementMethodType String?
-  cpvDivision           String?
-  bidsCount             Int      @default(0)
-  hasSanctioned         Boolean  @default(false)
-  sanctionedEdrpous     String[]
-  sampleVersion         String
-  createdAt             DateTime @default(now())
+  tenderId      Int
+  sampleVersion String
+  sampleGroup   String // positive | unlabeled
+  createdAt     DateTime @default(now()) @db.Timestamptz(3)
+  tender        Tender   @relation(fields: [tenderId], references: [id], onDelete: Cascade)
 
-  @@index([sampleGroup])
-  @@index([year, procurementMethodType])
+  @@id([tenderId, sampleVersion])
+  @@index([sampleVersion, sampleGroup])
 }
 
-/// Per-company bid-rigging risk score produced by evaluation/ml/score_companies.py
-/// (GraphSAGE over the co-bidding graph, trained on AMCU seeds vs full-history controls).
+/// Оцінка ризику компанії (слабка сутність ЛР1, 1 : 0..1 з Організацією): результат моделі.
+/// Назва, область, склад дослідження й мітка АМКУ — з Organization, StudyCompany, DecisionParty
+/// (подання v_company_card). winRate — генерована колонка (db/deploy.sql), писати її не можна.
 model CompanyRisk {
-  id             Int      @id @default(autoincrement())
-  edrpou         String   @unique
-  name           String?
-  score          Float               // 0..1 probability-like risk
-  rank           Int                 // 1 = highest risk
-  percentile     Float               // 0..100, share of companies with lower score
-  label          Boolean  @default(false)   // in AMCU register
-  firstDecision  DateTime?
-  group          String              // amcu | control | other
-  coverage       String              // full | capped | partial
-  nTenders       Int      @default(0)
-  nWon           Int      @default(0)
-  winRate        Float    @default(0)
-  degree         Int      @default(0)
-  region         String?             // найчастіша область реєстрації за картками учасника
-  features       Json                // raw feature values used by the model
-  contributions  Json                // [{feature, value, contribution}] from the linear explainer
-  topNeighbors   Json                // [{edrpou, name, weight, score, label}]
-  modelVersion   String
-  computedAt     DateTime @default(now())
+  orgCode       String       @id
+  score         Float // 0..1, каліброване
+  rank          Int // 1 = найвищий ризик
+  percentile    Float // 0..100
+  nTenders      Int          @default(0) // тендерів зі ставкою компанії (ознака моделі)
+  nWon          Int          @default(0) // з них виграних
+  winRate       Float?       @default(dbgenerated()) // GENERATED ALWAYS AS (nWon / nTenders) STORED
+  degree        Int          @default(0) // партнерів по торгах у графі
+  features      Json // значення ознак, на яких оцінено
+  contributions Json // [{feature, value, contribution}] — пояснення
+  topNeighbors  Json // [{orgCode, weight, score, influence}]
+  modelVersion  String
+  computedAt    DateTime     @default(now()) @db.Timestamptz(3)
+  runId         Int?
+  org           Organization @relation(fields: [orgCode], references: [code])
+  run           PipelineRun? @relation(fields: [runId], references: [id])
 
   @@index([score])
   @@index([rank])
-  @@index([group, coverage])
-  @@index([region])
 }
 
-/// Retrospective check ("what would the system have said on 31 December of the
-/// cutoff year"): GraphSAGE trained on the graph snapshot up to the cutoff with
-/// the AMCU decisions known by then, scores for every company in the snapshot,
-/// and the outcome taken from the current register. Written by
-/// evaluation/ml/backtest_snapshots.py.
+/// Ретроспективна оцінка (слабка сутність ЛР1, частковий ключ — дата зрізу).
+/// cutoffYear — генерована колонка з cutoffDate (для API), писати її не можна.
 model RiskBacktest {
-  id            Int       @id @default(autoincrement())
-  cutoffYear    Int                 // snapshot = tenders up to 31.12.cutoffYear (or cutoffDate)
-  cutoffDate    DateTime?           // exact cutoff when it is not the end of the year (forward forecast)
-  edrpou        String
-  name          String?
-  score         Float               // raw GraphSAGE probability at the cutoff
-  rank          Int                 // 1 = highest risk among all companies in the snapshot
-  rankFull      Int?                // rank among full-coverage companies only (fair population)
-  group         String              // amcu | control | other
-  coverage      String              // full | capped | partial
-  nTenders      Int       @default(0)
-  degree        Int       @default(0)
-  knownAtCutoff Boolean   @default(false)   // first AMCU decision <= cutoff (used as training label)
-  firstDecision DateTime?           // from the current register
-  outcome       String              // known | caught | none  (caught = first decision after the cutoff)
+  cutoffDate    DateTime     @db.Date
+  orgCode       String
+  cutoffYear    Int?         @default(dbgenerated()) // GENERATED ALWAYS AS (extract(year FROM cutoffDate)) STORED
+  score         Float // ймовірність GraphSAGE на дату зрізу
+  rank          Int // 1 = найвищий ризик серед усіх компаній знімка
+  rankFull      Int? // ранг серед компаній з повною історією
+  nTenders      Int          @default(0)
+  degree        Int          @default(0)
+  knownAtCutoff Boolean      @default(false) // перше рішення АМКУ <= дати зрізу (мітка навчання)
+  outcome       String // known | caught | none
   modelVersion  String
-  computedAt    DateTime  @default(now())
+  computedAt    DateTime     @default(now()) @db.Timestamptz(3)
+  runId         Int?
+  org           Organization @relation(fields: [orgCode], references: [code])
+  run           PipelineRun? @relation(fields: [runId], references: [id])
 
-  @@unique([cutoffYear, edrpou])
+  @@id([cutoffDate, orgCode])
   @@index([cutoffYear, rank])
-  @@index([cutoffYear, coverage, rankFull])
+  @@index([cutoffYear, rankFull])
   @@index([cutoffYear, outcome])
 }
 
-/// Two companies that share a contact value in their Prozorro bidder cards
-/// (phone / e-mail / contact person / street address). Loaded from
-/// evaluation/mining/shared_contacts.py output by evaluation/load_links_groups.py.
-model CompanyLink {
-  id       Int    @id @default(autoincrement())
-  edrpouA  String
-  edrpouB  String
-  kinds    String[]   // phone | email | person | address
-
-  @@unique([edrpouA, edrpouB])
-  @@index([edrpouA])
-  @@index([edrpouB])
-}
-
-/// Tight co-bidding group: connected component of pairs with high exclusivity
-/// and >= 3 shared tenders, size 2..15. Built by evaluation/load_links_groups.py.
+/// Тісна група (ЛР1): зв'язна компонента пар з високою ексклюзивністю, 2..15 компаній.
 model TightGroup {
-  id             Int      @id
-  size           Int
-  sharedTenders  Int                 // distinct tenders where >= 2 members met
-  totalTenders   Int                 // distinct tenders with any member bidding
-  wonAmount      Float               // sum of winning bid amounts of members, UAH
-  sanctioned     Int                 // members in the AMCU register
-  sameDecision   Int                 // member pairs named in one AMCU decision
-  meanScore      Float
-  maxScore       Float
-  regions        String[]
-  topCpv         String[]            // CPV divisions where the group bids most
-  firstShared    DateTime?
-  lastShared     DateTime?
-  computedAt     DateTime @default(now())
-  members        TightGroupMember[]
+  id            Int                @id
+  size          Int
+  sharedTenders Int // тендерів, де зустрілися >= 2 учасники групи
+  totalTenders  Int // тендерів з будь-яким учасником групи
+  wonAmount     Decimal            @db.Decimal(18, 2) // сума перемог учасників, грн
+  sanctioned    Int // учасників у реєстрі АМКУ
+  sameDecision  Int // пар учасників з одного рішення АМКУ
+  meanScore     Float
+  maxScore      Float
+  regions       String[] // похідний перелік для показу (з Organization учасників)
+  topCpv        String[] // похідний перелік головних ринків (з TenderItem)
+  firstShared   DateTime?          @db.Timestamptz(3)
+  lastShared    DateTime?          @db.Timestamptz(3)
+  computedAt    DateTime           @default(now()) @db.Timestamptz(3)
+  runId         Int?
+  members       TightGroupMember[]
+  run           PipelineRun?       @relation(fields: [runId], references: [id])
 
   @@index([maxScore])
   @@index([wonAmount])
   @@index([sanctioned])
 }
 
+/// Зв'язок «включає» (1 : N): компанія щонайбільше в одній групі (ключ — код).
 model TightGroupMember {
-  id        Int        @id @default(autoincrement())
+  orgCode   String       @id
   groupId   Int
-  group     TightGroup @relation(fields: [groupId], references: [id], onDelete: Cascade)
-  edrpou    String
-  name      String?
-  score     Float?
-  label     Boolean    @default(false)
-  nTenders  Int        @default(0)
-  nWon      Int        @default(0)
-  wonAmount Float      @default(0)
+  nTenders  Int          @default(0)
+  nWon      Int          @default(0)
+  wonAmount Decimal      @default(0) @db.Decimal(18, 2)
+  group     TightGroup   @relation(fields: [groupId], references: [id], onDelete: Cascade)
+  org       Organization @relation(fields: [orgCode], references: [code])
 
-  @@unique([groupId, edrpou])
-  @@index([edrpou])
+  @@index([groupId])
 }
 
-/// Per-buyer competition indicators, precomputed by evaluation/load_links_groups.py buyer_stats.
+/// Зведення замовника (слабка сутність ЛР1, 1 : 0..1 з Організацією).
 model BuyerStats {
-  edrpou            String   @id
-  name              String?
-  region            String?
-  tenders           Int                 // tenders with at least one bid
-  singleBidder      Int
-  twoBidder         Int
-  highRiskWins      Int                 // awards to companies with score >= 0.7
-  sanctionedWins    Int                 // awards to companies in the AMCU register
-  wonTotal          Float
-  wonHighRisk       Float               // awards to high-risk or sanctioned companies
-  repeatedPairs     Int                 // bidder pairs meeting >= 3 times at this buyer
-  computedAt        DateTime @default(now())
+  orgCode        String       @id
+  tenders        Int // тендерів хоча б з однією ставкою
+  singleBidder   Int
+  twoBidder      Int
+  highRiskWins   Int // перемог компаній з оцінкою >= 0,7
+  sanctionedWins Int // перемог компаній з реєстру АМКУ
+  wonTotal       Decimal      @db.Decimal(18, 2)
+  wonHighRisk    Decimal      @db.Decimal(18, 2)
+  repeatedPairs  Int // пар учасників, що зустрілися >= 3 рази в цього замовника
+  computedAt     DateTime     @default(now()) @db.Timestamptz(3)
+  runId          Int?
+  org            Organization @relation(fields: [orgCode], references: [code])
+  run            PipelineRun? @relation(fields: [runId], references: [id])
 
-  @@index([region])
   @@index([tenders])
   @@index([twoBidder])
+}
+
+// ---------------------------------------------------------------------------
+// Нормалізована модель (ЛР1–ЛР2, жовтень 2026): організації, рішення АМКУ,
+// походження похідних даних. Сирі джерела лишаються як є (Tender.rawData,
+// AmcuDecision — рядки реєстру, коди в Participation); нові таблиці на них спираються.
+// ---------------------------------------------------------------------------
+
+/// Довідник областей: 24 області, м. Київ, м. Севастополь, АР Крим.
+model Region {
+  name          String         @id
+  organizations Organization[]
+}
+
+/// Організація (суперклас ЛР1): замовник і/або учасник торгів. Ключ — код
+/// (ЄДРПОУ, РНОКПП або іноземний). Схема ідентифікатора в Prozorro ненадійна
+/// (той самий код трапляється з помилково обраною схемою), тому вона — атрибут.
+model Organization {
+  code            String                @id
+  idScheme        String? // найчастіша схема в картках (UA-EDR, XM-EORI, ...)
+  kind            String // legal | fop | nonresident (ЮО / ФОП / нерезидент)
+  name            String? // канонічна назва: найчастіша, при рівності — з найновішої картки
+  region          String?
+  regionRef       Region?               @relation(fields: [region], references: [name])
+  firstSeen       DateTime?             @db.Timestamptz(3)
+  lastSeen        DateTime?             @db.Timestamptz(3)
+  createdAt       DateTime              @default(now()) @db.Timestamptz(3)
+  updatedAt       DateTime              @updatedAt @db.Timestamptz(3)
+  contacts        OrganizationContact[]
+  tendersAsBuyer  Tender[]              @relation("TenderBuyer")
+  decisionParties DecisionParty[]
+  bids            Bid[]
+  awards          Award[]
+  study           StudyCompany?
+  risk            CompanyRisk?
+  backtests       RiskBacktest[]
+  groupMember     TightGroupMember?
+  buyerStats      BuyerStats?
+
+  @@index([kind])
+  @@index([region])
+}
+
+/// Багатозначний атрибут «контакти» (ЛР1): нормалізовані значення з карток учасника.
+model OrganizationContact {
+  code  String
+  kind  String // phone | email | person | address
+  value String
+  org   Organization @relation(fields: [code], references: [code], onDelete: Cascade)
+
+  @@id([code, kind, value])
+  @@index([kind, value])
+}
+
+/// Рішення АМКУ (сутність ЛР1): номер, дата й орган. Рядки реєстру — у AmcuDecision.
+model Decision {
+  id      Int             @id @default(autoincrement())
+  number  String
+  date    DateTime        @db.Timestamptz(3)
+  body    String
+  parties DecisionParty[]
+
+  @@unique([number, date, body])
+  @@index([date])
+}
+
+/// Зв'язок «фігурує в» (M : N) між рішенням АМКУ і організацією.
+model DecisionParty {
+  decisionId        Int
+  code              String
+  nameInRegister    String? // назва суб'єкта в реєстрі
+  firstSeenRegister String // перша версія реєстру з цим рядком
+  lastSeenRegister  String // остання версія реєстру з цим рядком
+  decision          Decision     @relation(fields: [decisionId], references: [id], onDelete: Cascade)
+  org               Organization @relation(fields: [code], references: [code])
+  courtEvents       CourtEvent[]
+
+  @@id([decisionId, code])
+  @@index([code])
+}
+
+/// Багатозначний складений атрибут зв'язку «фігурує в»: судове оскарження.
+model CourtEvent {
+  id            Int           @id @default(autoincrement())
+  decisionId    Int
+  code          String
+  caseNumber    String?
+  court         String?
+  courtDate     DateTime?     @db.Timestamptz(3)
+  content       String?
+  reviewNumber  String?
+  reviewDate    DateTime?     @db.Timestamptz(3)
+  reviewContent String?
+  notes         String?
+  party         DecisionParty @relation(fields: [decisionId, code], references: [decisionId, code], onDelete: Cascade)
+
+  @@index([decisionId, code])
+}
+
+/// Прогін конвеєра: з якого графа, вибірки, моделі й коду отримано похідні дані.
+model PipelineRun {
+  id            Int            @id @default(autoincrement())
+  step          String // score | groups | links | buyer_stats | backtest
+  graphVersion  String?
+  sampleVersion String?
+  modelVersion  String?
+  gitCommit     String?
+  startedAt     DateTime       @default(now()) @db.Timestamptz(3)
+  finishedAt    DateTime?      @db.Timestamptz(3)
+  status        String         @default("running") // running | ok | failed @db.Timestamptz(3)
+  notes         String?
+  companyRisks  CompanyRisk[]
+  backtests     RiskBacktest[]
+  groups        TightGroup[]
+  buyerStats    BuyerStats[]
+}
+
+/// Лот тендера (слабка сутність, власник — Тендер): предмет з власною очікуваною вартістю.
+/// Тендер без масиву lots у документі має одну неявну позицію: тоді lotId у ставці NULL,
+/// а очікувана вартість береться з Tender.
+model Lot {
+  tenderId      Int
+  lotId         String
+  title         String?
+  status        String?
+  valueAmount   Decimal?     @db.Decimal(18, 2)
+  valueCurrency String?
+  tender        Tender       @relation(fields: [tenderId], references: [id], onDelete: Cascade)
+  bids          Bid[]
+  awards        Award[]
+  items         TenderItem[]
+
+  @@id([tenderId, lotId])
+}
+
+/// Ставка компанії на лот (частина «Участі» ЛР1). Природний ключ — (тендер, лот, код у
+/// картці); унікальність із NULL у lotId — у db/deploy.sql (NULLS NOT DISTINCT).
+model Bid {
+  id            Int           @id @default(autoincrement())
+  tenderId      Int
+  lotId         String?
+  codeInCard    String // код учасника в картці (очищений від невидимих символів)
+  schemeInCard  String? // схема ідентифікатора в картці (UA-EDR, XM-EORI, ...)
+  orgCode       String? // посилання на Organization; NULL для кодів-заглушок
+  nameInCard    String?
+  regionInCard  String?
+  amount        Decimal?      @db.Decimal(18, 2)
+  bidDate       DateTime?     @db.Timestamptz(3)
+  status        String?
+  datePublished DateTime?     @db.Timestamptz(3) // копія Tender.datePublished: історія компанії без з'єднання з Tender (ЛР2, свідоме відхилення)
+  tender        Tender        @relation(fields: [tenderId], references: [id], onDelete: Cascade)
+  org           Organization? @relation(fields: [orgCode], references: [code])
+  lot           Lot?          @relation(fields: [tenderId, lotId], references: [tenderId, lotId])
+
+  @@unique([tenderId, lotId, codeInCard], map: "bid_natural_key") // у базі — NULLS NOT DISTINCT
+  @@index([tenderId, orgCode])
+  @@index([orgCode, datePublished])
+}
+
+/// Перемога (активне рішення про визначення переможця) — друга частина «Участі» ЛР1.
+/// Буває без ставки (звіт про договір, переговорна процедура).
+model Award {
+  id            Int           @id @default(autoincrement())
+  tenderId      Int
+  lotId         String?
+  codeInCard    String
+  schemeInCard  String? // схема ідентифікатора в картці (UA-EDR, XM-EORI, ...)
+  orgCode       String?
+  nameInCard    String?
+  regionInCard  String?
+  amount        Decimal?      @db.Decimal(18, 2)
+  awardDate     DateTime?     @db.Timestamptz(3)
+  datePublished DateTime?     @db.Timestamptz(3)
+  tender        Tender        @relation(fields: [tenderId], references: [id], onDelete: Cascade)
+  org           Organization? @relation(fields: [orgCode], references: [code])
+  lot           Lot?          @relation(fields: [tenderId, lotId], references: [tenderId, lotId])
+
+  @@unique([tenderId, lotId, codeInCard], map: "award_natural_key") // у базі — NULLS NOT DISTINCT
+  @@index([tenderId, orgCode])
+  @@index([orgCode, datePublished])
+}
+
+/// Склад дослідження: компанії, для яких збирач шукав повну історію на порталі
+/// (санкціоновані з реєстру АМКУ та випадкові контрольні). Раніше — лише в SQLite збирача.
+model StudyCompany {
+  code         String       @id
+  cohort       String // amcu | control
+  coverage     String // full | capped (історію обрізано лімітом порталу)
+  status       String // done | empty
+  tendersFound Int          @default(0) // тендерів у пошуку порталу
+  collectedAt  DateTime?    @db.Timestamptz(3)
+  org          Organization @relation(fields: [code], references: [code])
+
+  @@index([cohort, coverage])
+}
+
+/// Класифікатор ДК 021 (CPV): код і назва — довідник для позицій тендера.
+model Cpv {
+  code        String       @id // напр. 33600000-6
+  description String?
+  items       TenderItem[]
+}
+
+/// Позиція предмета закупівлі (слабка сутність, власник — Тендер): що саме купують,
+/// з кодом класифікатора; належить лоту, якщо тендер багатолотовий.
+model TenderItem {
+  tenderId    Int
+  itemId      String
+  lotId       String?
+  description String?
+  cpvCode     String?
+  quantity    Decimal? @db.Decimal(18, 3)
+  unit        String?
+  tender      Tender   @relation(fields: [tenderId], references: [id], onDelete: Cascade)
+  lot         Lot?     @relation(fields: [tenderId, lotId], references: [tenderId, lotId])
+  cpv         Cpv?     @relation(fields: [cpvCode], references: [code])
+
+  @@id([tenderId, itemId])
+  @@index([cpvCode])
 }
