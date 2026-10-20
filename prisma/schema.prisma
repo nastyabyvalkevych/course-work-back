@@ -19,15 +19,15 @@ model Tender {
   buyerCode             String? // посилання на Organization; NULL для кодів-заглушок
   procurementMethodType String? // тип процедури
   status                String?
-  valueAmount           Float? // очікувана вартість тендера; numeric не застосовано: зміна типу переписала б таблицю з документами (ЛР3)
+  valueAmount           Decimal?       @db.Decimal(18, 2) // очікувана вартість тендера, грн
   valueCurrency         String?
   cpvCodes              String[] // коди CPV для пошукового модуля курсової; модель дослідження бере їх з TenderItem
-  datePublished         DateTime? // UTC без часового поясу: зміна типу переписала б таблицю з документами (ЛР3)     
-  dateModified          DateTime?
+  datePublished         DateTime?      @db.Timestamptz(3)
+  dateModified          DateTime?      @db.Timestamptz(3)
   documentLength        Int            @default(0)
   rawData               Json // повний документ Prozorro — першоджерело
-  createdAt             DateTime       @default(now())
-  updatedAt             DateTime       @updatedAt
+  createdAt             DateTime       @default(now()) @db.Timestamptz(3)
+  updatedAt             DateTime       @updatedAt @db.Timestamptz(3)
   buyer                 Organization?  @relation("TenderBuyer", fields: [buyerCode], references: [code])
   tenderIndexes         TenderIndex[]
   samples               TenderSample[]

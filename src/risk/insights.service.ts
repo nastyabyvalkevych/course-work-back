@@ -107,7 +107,7 @@ export class InsightsService {
             const recent = await this.prisma.$queryRaw<
                 Array<{ id: number; tender_id: string | null; title: string | null; date: Date | null; value: number | null; bidders: number; winner: string | null; winner_score: number | null }>
             >(Prisma.sql`
-                SELECT t.id, t."tenderID" AS tender_id, t.title, t."datePublished" AS date, t."valueAmount" AS value,
+                SELECT t.id, t."tenderID" AS tender_id, t.title, t."datePublished" AS date, t."valueAmount"::float8 AS value,
                        (SELECT count(DISTINCT b."codeInCard") FROM "Bid" b WHERE b."tenderId" = t.id)::int AS bidders,
                        w.winner, w.winner_score
                   FROM "Tender" t
@@ -247,7 +247,7 @@ export class InsightsService {
                 SELECT "tenderId", count(DISTINCT "orgCode")::int AS members FROM "Bid" WHERE "orgCode" = ANY(${ids})
                  GROUP BY "tenderId" HAVING count(DISTINCT "orgCode") >= 2
             )
-            SELECT t.id, t."tenderID" AS tender_id, t.title, t."procuringEntity" AS buyer, t."datePublished" AS date, t."valueAmount" AS value,
+            SELECT t.id, t."tenderID" AS tender_id, t.title, t."procuringEntity" AS buyer, t."datePublished" AS date, t."valueAmount"::float8 AS value,
                    mb.members,
                    (SELECT max(a."nameInCard") FROM "Award" a WHERE a."tenderId" = t.id AND a."orgCode" = ANY(${ids})) AS winner
               FROM mb JOIN "Tender" t ON t.id = mb."tenderId"

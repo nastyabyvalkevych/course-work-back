@@ -537,7 +537,7 @@ export class RiskService {
                 title: tender.title,
                 procuringEntity: tender.procuringEntity,
                 buyerEdrpou: tender.buyerEdrpou ?? ((raw?.procuringEntity as Record<string, unknown> | undefined)?.identifier as Record<string, unknown> | undefined)?.id ?? null,
-                valueAmount: tender.valueAmount,
+                valueAmount: tender.valueAmount === null ? null : Number(tender.valueAmount),
                 valueCurrency: tender.valueCurrency,
                 status: tender.status,
                 datePublished: tender.datePublished,
@@ -799,7 +799,7 @@ export class RiskService {
             ),
             recent AS (
                 SELECT t.id, t."tenderID", t.title, t."procuringEntity",
-                       t."datePublished", t."valueAmount"
+                       t."datePublished", t."valueAmount"::float8 AS "valueAmount"
                 FROM "Tender" t JOIN mine m ON m."tenderId" = t.id
                 ORDER BY t."datePublished" DESC NULLS LAST
                 LIMIT ${limit}
