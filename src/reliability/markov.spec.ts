@@ -279,3 +279,35 @@ describe("Kubat's model: N modules, K tasks", () => {
         expect(Math.abs(rep.kubat.failureProbabilityPerRequest - (1 - rep.discrete.systemReliability))).toBeLessThan(5e-4)
     })
 })
+
+describe('invariants on random profiles (property-based)', () => {
+    // deterministic LCG so failures are reproducible
+    let seed = 20261025
+    const rnd = () => ((seed = (seed * 1664525 + 1013904223) % 2 ** 32) / 2 ** 32)
+    const randomProfile = (): ReliabilityProfile => {
+        const n = 2 + Math.floor(rnd() * 6)
+        const modules = Array.from({ length: n }, (_, i) => ({ id: `m${i}`, name: `m${i}`, reliability: 0.9 + 0.1 * rnd(), meanSojournMs: 1 + 100 * rnd() }))
+        const tasks = Array.from({ length: 1 + Math.floor(rnd() * 5) }, (_, k) => ({
+            id: `t${k}`,
+            name: `t${k}`,
+            weight: 0.1 + rnd(),
+            path: Array.from({ length: 1 + Math.floor(rnd() * 6) }, () => `m${Math.floor(rnd() * n)}`),
+        }))
+        return { system: 'random', modules, tasks, requestsPerHour: 1000 }
+    }
+
+    it('keeps probabilities in [0, 1], distributions normalised and R monotone in every Rᵢ (200 profiles)', () => {
+        for (let k = 0; k < 200; k++) {
+            const p = randomProfile()
+            const rep = evaluateProfile(p)
+            for (const r of [rep.discrete.systemReliability, rep.gokhale.systemReliability, rep.continuous.reliabilityAtHorizon, ...rep.tasks.map((t) => t.modelReliability)]) {
+                expect(r).toBeGreaterThanOrEqual(0)
+                expect(r).toBeLessThanOrEqual(1)
+            }
+            expect(rep.usage.initial.reduce((s, v) => s + v, 0)).toBeCloseTo(1, 9)
+            expect(rep.modules.reduce((s, m) => s + m.timeShare, 0)).toBeCloseTo(1, 9)
+            rep.modules.forEach((m) => expect(m.sensitivity).toBeGreaterThanOrEqual(-1e-9))
+            expect(rep.kubat.failureProbabilityPerRequest).toBeGreaterThanOrEqual(0)
+        }
+    })
+})

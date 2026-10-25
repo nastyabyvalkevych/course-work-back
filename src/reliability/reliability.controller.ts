@@ -1,4 +1,4 @@
-import { Body, Controller, Get, Post, Query } from '@nestjs/common'
+import { Body, Controller, Get, HttpCode, Post, Query } from '@nestjs/common'
 
 import type { ReliabilityProfile } from './markov'
 import { ReliabilityService } from './reliability.service'
@@ -26,6 +26,7 @@ export class ReliabilityController {
     }
 
     @Post('evaluate')
+    @HttpCode(200) // a computation, nothing is created
     evaluate(@Body() profile: ReliabilityProfile, @Query('horizonHours') horizonHours?: string) {
         return this.service.evaluate(profile, horizonHours ? Number(horizonHours) : 24)
     }
