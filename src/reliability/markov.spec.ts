@@ -1,4 +1,17 @@
-import { ReliabilityProfile, buildUsage, cheungReliability, evaluateProfile, invert, solve } from './markov'
+import {
+    ReliabilityProfile,
+    UsageProfile,
+    buildUsage,
+    cheungReliability,
+    evaluateProfile,
+    expectedVisits,
+    gokhaleReliability,
+    invert,
+    kubatModuleReliability,
+    laprieRunReliability,
+    laprieStationary,
+    solve,
+} from './markov'
 import { ReliabilityService } from './reliability.service'
 import { DEFAULT_PROFILE } from './default-profile'
 
@@ -167,5 +180,102 @@ describe('live status overlay', () => {
         expect(rep.tasks.find((t) => t.id === 'ranking')?.modelReliability).toBe(0)
         expect(rep.tasks.find((t) => t.id === 'summary_hit')?.modelReliability).toBeGreaterThan(0.99)
         expect(rep.discrete.systemReliability).toBeLessThan(0.7)
+    })
+})
+
+// Lecture 8, example 1: M1 interface → M2 business logic / M3 database → M4 report (exit)
+const L8_P = [
+    [0, 0.7, 0.3, 0],
+    [0, 0, 0.6, 0.4],
+    [0, 0.2, 0, 0.8],
+    [0, 0, 0, 0],
+]
+const L8_Q = [1, 0, 0, 0]
+const L8_R = [0.99, 0.95, 0.98, 0.97]
+
+describe("Gokhale's model (lecture 8, example 1)", () => {
+    it('solves V_i = q_i + Σ V_j p_ji', () => {
+        const v = expectedVisits(L8_Q, L8_P)
+        expect(v[0]).toBeCloseTo(1, 10)
+        expect(v[1]).toBeCloseTo(0.76 / 0.88, 10) // ≈ 0.86
+        expect(v[2]).toBeCloseTo(0.3 + 0.6 * (0.76 / 0.88), 10) // ≈ 0.82
+        expect(v[3]).toBeCloseTo(1, 10)
+    })
+
+    it('gives R = Π R_i^{V_i} ≈ 0.90', () => {
+        const r = gokhaleReliability(expectedVisits(L8_Q, L8_P), L8_R)
+        expect(r).toBeCloseTo(0.904, 3)
+    })
+
+    it('agrees with Cheung on the same chain to first order', () => {
+        const usage: UsageProfile = {
+            moduleIds: ['m1', 'm2', 'm3', 'm4'],
+            initial: L8_Q,
+            transition: L8_P,
+            exit: [0, 0, 0, 1],
+            taskModule: [],
+            moduleUsage: [],
+        }
+        const cheung = cheungReliability(usage, L8_R).systemReliability
+        expect(Math.abs(cheung - 0.904)).toBeLessThan(0.01)
+    })
+
+    it('names the module with the largest V_i·t_i as critical', () => {
+        const rep = evaluateProfile(DEFAULT_PROFILE)
+        expect(rep.gokhale.criticalModule).toBe('postgres')
+        expect(rep.gokhale.visits).toEqual(rep.modules.map(() => expect.any(Number)))
+    })
+})
+
+describe("Laprie's model (lecture 8, example 2)", () => {
+    it('gives R = exp(−Σ V_i θ_i λ_i) ≈ 0.91', () => {
+        const v = expectedVisits(L8_Q, L8_P)
+        const r = laprieRunReliability(v, [2, 5, 4, 3], [0.005, 0.01, 0.006, 0.008])
+        expect(r).toBeCloseTo(Math.exp(-(0.01 + 0.05 * v[1] + 0.024 * v[2] + 0.024)), 12)
+        expect(r).toBeCloseTo(0.908, 3)
+    })
+
+    it('reduces to Gokhale when λ_i is derived from R_i over θ_i', () => {
+        const v = expectedVisits(L8_Q, L8_P)
+        const theta = [2, 5, 4, 3]
+        const lambda = L8_R.map((r, i) => -Math.log(r) / theta[i])
+        expect(laprieRunReliability(v, theta, lambda)).toBeCloseTo(gokhaleReliability(v, L8_R), 12)
+    })
+
+    it('stationary π of π·B′ = 0 equals the share of time V_i τ_i / Σ V_j τ_j', () => {
+        const usage = buildUsage(DEFAULT_PROFILE)
+        const tau = DEFAULT_PROFILE.modules.map((m) => m.meanSojournMs)
+        const pi = laprieStationary(usage, tau) as number[]
+        const v = expectedVisits(usage.initial, usage.transition)
+        const busy = v.reduce((s, x, i) => s + x * tau[i], 0)
+        expect(pi.reduce((s, x) => s + x, 0)).toBeCloseTo(1, 10)
+        pi.forEach((x, i) => expect(x).toBeCloseTo((v[i] * tau[i]) / busy, 10))
+    })
+})
+
+describe("Kubat's model: N modules, K tasks", () => {
+    it('computes R_i(k) = ∫ e^{−λt} g(t) dt for deterministic and exponential sojourn', () => {
+        expect(kubatModuleReliability(0.01, 5)).toBeCloseTo(Math.exp(-0.05), 12)
+        expect(kubatModuleReliability(0.01, 5, 'exponential')).toBeCloseTo(1 / 1.05, 12)
+    })
+
+    it('builds V_i(k) per task and R(k) = Π R_i^{V_i(k)}', () => {
+        const rep = evaluateProfile(DEFAULT_PROFILE)
+        const ids = DEFAULT_PROFILE.modules.map((m) => m.id)
+        const miss = rep.tasks.find((t) => t.id === 'company_miss')!
+        expect(miss.visits[ids.indexOf('postgres')]).toBeCloseTo(2, 10)
+        expect(miss.visits[ids.indexOf('prozorro_client')]).toBe(0)
+        const R = DEFAULT_PROFILE.modules.map((m) => m.reliability)
+        expect(miss.modelReliability).toBeCloseTo(miss.visits.reduce((r, v, i) => r * R[i] ** v, 1), 12)
+    })
+
+    it('λ_s = Σ r_k [1 − R(k)] matches the per-request failure count', () => {
+        const rep = evaluateProfile(DEFAULT_PROFILE)
+        const W = DEFAULT_PROFILE.tasks.reduce((s, t) => s + t.weight, 0)
+        const expected = rep.tasks.reduce((s, t) => s + (t.weight / W) * (1 - t.modelReliability), 0)
+        expect(rep.kubat.failureProbabilityPerRequest).toBeCloseTo(expected, 12)
+        expect(rep.kubat.failuresPerHour).toBeCloseTo(expected * 3600, 9)
+        // tasks are short and loop-free, so Kubat and Cheung give close per-request figures
+        expect(Math.abs(rep.kubat.failureProbabilityPerRequest - (1 - rep.discrete.systemReliability))).toBeLessThan(5e-4)
     })
 })
